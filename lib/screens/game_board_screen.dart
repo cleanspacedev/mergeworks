@@ -1,0 +1,714 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter/foundation.dart';
+import 'package:confetti/confetti.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mergeworks/models/game_item.dart';
+import 'package:mergeworks/services/game_service.dart';
+import 'package:mergeworks/services/achievement_service.dart';
+import 'package:mergeworks/services/quest_service.dart';
+import 'package:mergeworks/services/audio_service.dart';
+import 'package:mergeworks/widgets/energy_bar.dart';
+import 'package:mergeworks/widgets/currency_display.dart';
+import 'package:mergeworks/widgets/grid_item_widget.dart';
+import 'package:mergeworks/widgets/tutorial_overlay.dart';
+import 'package:mergeworks/widgets/particle_field.dart';
+import 'package:mergeworks/theme.dart';
+
+class GameBoardScreen extends StatefulWidget {
+  const GameBoardScreen({super.key});
+
+  @override
+  State<GameBoardScreen> createState() => _GameBoardScreenState();
+}
+
+class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProviderStateMixin {
+  late ConfettiController _confettiController;
+  GameItem? _selectedItem;
+  final Set<String> _highlightedItems = {};
+  final Set<String> _animatingIds = {};
+  int _invalidMergeAttempts = 0; // Tracks wrong selections to throttle messaging
+
+  // Particle and measurement helpers
+  final GlobalKey _gridKey = GlobalKey();
+  final GlobalKey<ParticleFieldState> _particleKey = GlobalKey<ParticleFieldState>();
+
+  // Merge animation state
+  AnimationController? _mergeController;
+  List<_Ghost> _ghosts = [];
+  Offset? _targetCenter;
+
+  @override
+  void initState() {
+    super.initState();
+    _confettiController = ConfettiController(duration: const Duration(seconds: 2));
+  }
+
+  @override
+  void dispose() {
+    _mergeController?.dispose();
+    _confettiController.dispose();
+    super.dispose();
+  }
+
+  void _onItemTap(GameItem item, GameService gameService) {
+    if (_selectedItem?.id == item.id) {
+      setState(() {
+        _selectedItem = null;
+        _highlightedItems.clear();
+      });
+      return;
+    }
+
+    final nearbyItems = gameService.getItemsInRange(item.gridX!, item.gridY!, 1);
+    final matchingItems = nearbyItems.where((i) => i.tier == item.tier).toList();
+    matchingItems.add(item);
+
+    if (matchingItems.length >= 3 || (matchingItems.length >= 2 && gameService.powerMergeCharges > 0)) {
+      setState(() {
+        _selectedItem = item;
+        _highlightedItems.clear();
+        _highlightedItems.addAll(matchingItems.map((i) => i.id));
+        _invalidMergeAttempts = 0; // reset on valid selection
+      });
+    } else {
+      setState(() {
+        _selectedItem = null;
+        _highlightedItems.clear();
+      });
+      _handleInvalidMergeAttempt();
+    }
+  }
+
+  Future<void> _performMerge(GameService gameService, AudioService audioService, AchievementService achievementService, QuestService questService) async {
+    if (_selectedItem == null) return;
+
+    final itemsToMerge = gameService.gridItems.where((item) => _highlightedItems.contains(item.id)).toList();
+    
+    if (!gameService.canMerge(itemsToMerge)) {
+      _handleInvalidMergeAttempt();
+      return;
+    }
+
+    // Play advanced merge animation before mutating state
+    await _playMergeAnimation(itemsToMerge);
+    final newItem = await gameService.mergeItems(itemsToMerge);
+    if (newItem != null) {
+      setState(() {
+        _selectedItem = null;
+        _highlightedItems.clear();
+        _invalidMergeAttempts = 0; // reset on successful merge
+      });
+
+      audioService.playMergeSound();
+      _confettiController.play();
+      // Emit local particle burst at target
+      if (_targetCenter != null) {
+        _particleKey.currentState?.burst(_targetCenter!, count: 42);
+      }
+      _showMessage('Merged into ${newItem.name}! 🎉');
+
+      final completedAchievements = await achievementService.checkProgress(gameService.playerStats);
+      for (final achievement in completedAchievements) {
+        await gameService.addGems(achievement.rewardGems);
+        _showMessage('Achievement unlocked: ${achievement.title}! +${achievement.rewardGems} gems 💎');
+      }
+
+      final completedQuests = await questService.checkProgress(gameService.playerStats);
+      for (final quest in completedQuests) {
+        await gameService.addGems(quest.rewardGems);
+        await gameService.addCoins(quest.rewardCoins);
+        _showMessage('Quest completed: ${quest.title}! 🎯');
+      }
+    }
+  }
+
+  void _handleInvalidMergeAttempt() {
+    if (!mounted) return;
+    _invalidMergeAttempts++;
+    // Cancel any currently visible snackbar to prevent stacking
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    // Show on first wrong attempt, then every 20th wrong attempt
+    if (_invalidMergeAttempts == 1 || _invalidMergeAttempts % 20 == 0) {
+      _showMergeRequirementMessage();
+    }
+  }
+
+  void _showMergeRequirementMessage() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Need 3 or more to merge'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _showMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer4<GameService, AudioService, AchievementService, QuestService>(
+      builder: (context, gameService, audioService, achievementService, questService, child) {
+        if (gameService.isLoading) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final showTutorial = !gameService.playerStats.hasCompletedTutorial;
+
+        return Scaffold(
+          body: Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: AppLevelTheme.gradientForLevel(context, gameService.currentLevel),
+                  ),
+                ),
+                child: SafeArea(
+                  child: Column(
+                    children: [
+                      _buildTopBar(context, gameService),
+                      Expanded(child: _buildGameGrid(context, gameService, audioService, achievementService, questService)),
+                      _buildBottomBar(context, gameService),
+                    ],
+                  ),
+                ),
+              ),
+              // Particle overlay across the whole screen
+              Positioned.fill(child: ParticleField(key: _particleKey)),
+              // Ghost overlay for merge animation
+              if (_mergeController != null && _targetCenter != null)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _mergeController!,
+                      builder: (context, _) {
+                        final t = Curves.easeInOutCubic.transform(_mergeController!.value);
+                        return CustomMultiChildLayout(
+                          delegate: _GhostsLayoutDelegate(_ghosts, _targetCenter!, t),
+                          children: [
+                            for (int i = 0; i < _ghosts.length; i++)
+                              LayoutId(id: i, child: _GhostEmoji(emoji: _ghosts[i].emoji, progress: t)),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              Align(
+                alignment: Alignment.topCenter,
+                child: ConfettiWidget(
+                  confettiController: _confettiController,
+                  blastDirectionality: BlastDirectionality.explosive,
+                  particleDrag: 0.05,
+                  emissionFrequency: 0.05,
+                  numberOfParticles: 30,
+                  gravity: 0.2,
+                  colors: [
+                    Theme.of(context).colorScheme.primary,
+                    Theme.of(context).colorScheme.secondary,
+                    Theme.of(context).colorScheme.tertiary,
+                  ],
+                ),
+              ),
+              if (showTutorial)
+                TutorialOverlay(
+                  onComplete: () {
+                    gameService.completeTutorial();
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTopBar(BuildContext context, GameService gameService) {
+    return Padding(
+      padding: AppSpacing.paddingMd,
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: EnergyBar(
+                  current: gameService.playerStats.energy,
+                  max: gameService.playerStats.maxEnergy,
+                  onTap: () => context.push('/shop'),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(children: [
+                  Icon(Icons.auto_awesome, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Text('Level ${gameService.currentLevel}', style: context.textStyles.labelLarge?.medium.withColor(Theme.of(context).colorScheme.onSurface)),
+                ]),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              IconButton(
+                icon: const Icon(Icons.settings),
+                onPressed: () => context.push('/settings'),
+                style: IconButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              CurrencyDisplay(
+                icon: '💎',
+                amount: gameService.playerStats.gems,
+                onTap: () => context.push('/shop'),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              CurrencyDisplay(
+                icon: '🪙',
+                amount: gameService.playerStats.coins,
+              ),
+              const Spacer(),
+              IconButton.outlined(
+                icon: const Icon(Icons.book),
+                onPressed: () => context.push('/collection'),
+                tooltip: 'Collection',
+              ),
+              IconButton.outlined(
+                icon: const Icon(Icons.emoji_events),
+                onPressed: () => context.push('/achievements'),
+                tooltip: 'Achievements',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGameGrid(BuildContext context, GameService gameService, AudioService audioService, AchievementService achievementService, QuestService questService) {
+    final gridSize = GameService.gridSize;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.md),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Use the full available space between the top and bottom bars
+          const double padding = AppSpacing.sm;
+          const double spacing = 4.0;
+          final double availableW = constraints.maxWidth;
+          final double availableH = constraints.maxHeight;
+          final double innerW = availableW - padding * 2;
+          final double innerH = availableH - padding * 2;
+          final double cellW = (innerW - spacing * (gridSize - 1)) / gridSize;
+          final double cellH = (innerH - spacing * (gridSize - 1)) / gridSize;
+          final double childAspectRatio = (cellW <= 0 || cellH <= 0) ? 1.0 : (cellW / cellH);
+
+          return SizedBox.expand(
+            child: Container(
+              key: _gridKey,
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                  width: 2,
+                ),
+              ),
+              padding: AppSpacing.paddingSm,
+              child: GridView.builder(
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: gridSize,
+                  crossAxisSpacing: spacing,
+                  mainAxisSpacing: spacing,
+                  childAspectRatio: childAspectRatio,
+                ),
+                itemCount: gridSize * gridSize,
+                itemBuilder: (context, index) {
+                  final x = index % gridSize;
+                  final y = index ~/ gridSize;
+                  final item = gameService.gridItems.where((i) => i.gridX == x && i.gridY == y).firstOrNull;
+
+                  if (item != null) {
+                    final hidden = _animatingIds.contains(item.id);
+                    return Opacity(
+                      opacity: hidden ? 0.0 : 1.0,
+                      child: GridItemWidget(
+                        item: item,
+                        isHighlighted: _highlightedItems.contains(item.id),
+                        onTap: () => _onItemTap(item, gameService),
+                      ),
+                    );
+                  }
+
+                  return Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                  );
+                },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildBottomBar(BuildContext context, GameService gameService) {
+    final canPowerMerge = _highlightedItems.length == 2 && _areTwoSameTier(gameService) && gameService.powerMergeCharges > 0;
+    final canMergeNow = _highlightedItems.length >= 3 || canPowerMerge;
+    return Container(
+      padding: AppSpacing.paddingMd,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+          ),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Abilities bar
+          SizedBox(
+            height: 60,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _AbilityButton(
+                  icon: Icons.auto_awesome_motion,
+                  label: 'Summon x4',
+                  cost: 80,
+                  color: Theme.of(context).colorScheme.tertiary,
+                  onPressed: () async {
+                    final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
+                    if (ok) _showMessage('Summoned new items ✨');
+                    else _showMessage('Not enough coins');
+                  },
+                ),
+                _AbilityButton(
+                  icon: Icons.content_copy,
+                  label: 'Duplicate',
+                  cost: 120,
+                  color: Theme.of(context).colorScheme.primary,
+                  onPressed: () async {
+                    if (_selectedItem == null) {
+                      _showMessage('Select an item to duplicate');
+                      return;
+                    }
+                    final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
+                    if (ok) _showMessage('Duplicated item ➕');
+                    else _showMessage('Action failed or not enough coins');
+                  },
+                ),
+                _AbilityButton(
+                  icon: Icons.cleaning_services,
+                  label: 'Clear',
+                  cost: 100,
+                  color: Theme.of(context).colorScheme.error,
+                  onPressed: () async {
+                    if (_selectedItem == null) {
+                      _showMessage('Select an item to clear');
+                      return;
+                    }
+                    final ok = await gameService.abilityClearItem(_selectedItem!.id, cost: 100);
+                    if (ok) {
+                      setState(() { _selectedItem = null; _highlightedItems.clear(); });
+                      _showMessage('Cleared item 🧹');
+                    } else {
+                      _showMessage('Action failed or not enough coins');
+                    }
+                  },
+                ),
+                _AbilityButton(
+                  icon: Icons.shuffle,
+                  label: 'Shuffle',
+                  cost: 150,
+                  color: Theme.of(context).colorScheme.secondary,
+                  onPressed: () async {
+                    final ok = await gameService.abilityShuffleBoard(cost: 150);
+                    if (ok) _showMessage('Shuffled the board 🔀');
+                    else _showMessage('Not enough coins');
+                  },
+                ),
+                _AbilityButton(
+                  icon: Icons.flash_on,
+                  label: '2-Merge',
+                  cost: 200,
+                  trailing: gameService.powerMergeCharges > 0 ? 'x${gameService.powerMergeCharges}' : null,
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  onPressed: () async {
+                    final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
+                    if (ok) _showMessage('Power Merge ready ⚡');
+                    else _showMessage('Not enough coins');
+                  },
+                ),
+              ].map((w) => Padding(padding: const EdgeInsets.only(right: 12), child: w)).toList(),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: canMergeNow
+                      ? () => _performMerge(
+                            gameService,
+                            context.read<AudioService>(),
+                            context.read<AchievementService>(),
+                            context.read<QuestService>(),
+                          )
+                      : null,
+                  icon: Icon(Icons.auto_awesome, color: Theme.of(context).colorScheme.onPrimary, size: 26),
+                  label: Text(
+                    'Merge (${_highlightedItems.length})${canPowerMerge ? ' • Power' : ''}',
+                    style: context.textStyles.titleMedium?.bold.copyWith(color: Theme.of(context).colorScheme.onPrimary),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              FilledButton.tonalIcon(
+                onPressed: () => context.push('/daily-spin'),
+                icon: Icon(Icons.casino, color: Theme.of(context).colorScheme.onSecondaryContainer, size: 26),
+                label: Text('Spin', style: context.textStyles.titleMedium?.bold.copyWith(color: Theme.of(context).colorScheme.onSecondaryContainer)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
+                  foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 18),
+                  shape: const StadiumBorder(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _areTwoSameTier(GameService gs) {
+    if (_highlightedItems.length != 2) return false;
+    final items = gs.gridItems.where((i) => _highlightedItems.contains(i.id)).toList();
+    return items.length == 2 && items[0].tier == items[1].tier && items[0].tier < GameService.totalTiers;
+  }
+}
+
+// ===================== Merge Animation Helpers =====================
+class _Ghost {
+  _Ghost({required this.emoji, required this.start});
+  final String emoji;
+  final Offset start; // global
+}
+
+class _GhostEmoji extends StatelessWidget {
+  const _GhostEmoji({required this.emoji, required this.progress});
+  final String emoji;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    // Scale down and fade out near the end
+    final scale = 1.0 - (progress * 0.4);
+    final opacity = 1.0 - (progress * 0.9);
+    final glowColor = Theme.of(context).colorScheme.secondary;
+    return Opacity(
+      opacity: opacity.clamp(0.0, 1.0),
+      child: Transform.scale(
+        scale: scale.clamp(0.6, 1.0),
+        child: Text(
+          emoji,
+          style: TextStyle(
+            fontSize: 36,
+            shadows: [
+              Shadow(color: glowColor.withValues(alpha: 0.7), blurRadius: 12),
+              Shadow(color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.5), blurRadius: 18),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GhostsLayoutDelegate extends MultiChildLayoutDelegate {
+  _GhostsLayoutDelegate(this.ghosts, this.target, this.t);
+  final List<_Ghost> ghosts;
+  final Offset target;
+  final double t; // 0..1
+
+  @override
+  void performLayout(Size size) {
+    for (int i = 0; i < ghosts.length; i++) {
+      if (!hasChild(i)) continue;
+      final boxSize = layoutChild(i, const BoxConstraints.tightFor(width: 28, height: 28));
+      final g = ghosts[i];
+      // Arc path: interpolate with slight perpendicular offset
+      final start = g.start;
+      final dir = (target - start);
+      final len = dir.distance == 0 ? 1.0 : dir.distance;
+      final norm = Offset(dir.dx / len, dir.dy / len);
+      final perp = Offset(-norm.dy, norm.dx);
+      final arc = perp * (1 - t) * 24.0; // 24px side arc shrinking over time
+      final pos = Offset.lerp(start, target, t)! + arc;
+      positionChild(i, Offset(pos.dx - boxSize.width / 2, pos.dy - boxSize.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRelayout(covariant _GhostsLayoutDelegate oldDelegate) => oldDelegate.t != t || oldDelegate.ghosts != ghosts || oldDelegate.target != target;
+}
+
+extension on _GameBoardScreenState {
+  Future<void> _playMergeAnimation(List<GameItem> items) async {
+    try {
+      if (_mergeController?.isAnimating == true) return;
+      if (_gridKey.currentContext == null) return;
+      final box = _gridKey.currentContext!.findRenderObject() as RenderBox?;
+      if (box == null) return;
+      final gridTopLeft = box.localToGlobal(Offset.zero);
+      final gridW = box.size.width;
+      final gridH = box.size.height;
+      const padding = AppSpacing.sm; // inner padding around grid content
+      const spacing = 4.0; // GridView crossAxis/mainAxis spacing
+      final innerW = gridW - padding * 2;
+      final innerH = gridH - padding * 2;
+      final cellW = (innerW - spacing * (GameService.gridSize - 1)) / GameService.gridSize;
+      final cellH = (innerH - spacing * (GameService.gridSize - 1)) / GameService.gridSize;
+
+      Offset cellCenter(int x, int y) => gridTopLeft + Offset(padding + x * (cellW + spacing) + cellW / 2, padding + y * (cellH + spacing) + cellH / 2);
+
+      // Determine target cell (same as service integer average)
+      final centerX = items.map((e) => e.gridX!).reduce((a, b) => a + b) ~/ items.length;
+      final centerY = items.map((e) => e.gridY!).reduce((a, b) => a + b) ~/ items.length;
+      final target = cellCenter(centerX, centerY);
+
+      // Setup ghosts
+      _ghosts = items.map((e) => _Ghost(emoji: e.emoji, start: cellCenter(e.gridX!, e.gridY!))).toList();
+      _targetCenter = target;
+      _animatingIds
+        ..clear()
+        ..addAll(items.map((e) => e.id));
+
+      _mergeController?.dispose();
+      _mergeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 550));
+
+      setState(() {});
+
+      await _mergeController!.forward();
+    } catch (e) {
+      debugPrint('Merge animation failed: $e');
+    } finally {
+      // Clear ghost overlay and reveal items (actual removal happens after mergeItems)
+      _mergeController?.dispose();
+      _mergeController = null;
+      _ghosts = [];
+      _animatingIds.clear();
+      setState(() {});
+    }
+  }
+}
+
+// ===================== UI: Ability Button =====================
+class _AbilityButton extends StatelessWidget {
+  const _AbilityButton({
+    required this.icon,
+    required this.label,
+    required this.cost,
+    required this.color,
+    this.trailing,
+    this.onPressed,
+  });
+  final IconData icon;
+  final String label;
+  final int cost;
+  final Color color;
+  final String? trailing;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final onColor = _bestOnColor(context, color);
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color,
+        foregroundColor: onColor,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        minimumSize: const Size(0, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        elevation: 0,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: onColor, size: 18),
+          const SizedBox(width: 6),
+          Text(label, style: context.textStyles.labelMedium?.bold.withColor(onColor)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            decoration: BoxDecoration(
+              color: onColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(children: [
+              const Text('🪙', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 3),
+              Text('$cost', style: context.textStyles.labelSmall?.bold.withColor(onColor)),
+            ]),
+          ),
+          if (trailing != null) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: onColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(trailing!, style: context.textStyles.labelSmall?.bold.withColor(onColor)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Color _bestOnColor(BuildContext context, Color bg) {
+    final luminance = bg.computeLuminance();
+    return luminance > 0.5 ? Colors.black : Colors.white;
+  }
+}

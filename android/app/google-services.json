@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1019630920962",
+    "project_id": "r0ih74w0yudsahfrxih5zsaar2e1nr",
+    "storage_bucket": "r0ih74w0yudsahfrxih5zsaar2e1nr.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1019630920962:android:e679a748031456f0f28e1b",
+        "android_client_info": {
+          "package_name": "com.mergeworks.mergeworks"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGRjEg-7FdPHD_C-oMsxOU9ZmrcmtHJxk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

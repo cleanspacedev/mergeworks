@@ -1,0 +1,36 @@
+name: mergeworks
+description: "Merge magical items and unravel enchanting progression chains in this captivating puzzle game, blending strategic merges with delightful discoveries in a vibrant fantasy world."
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.6.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+  provider: ^6.1.2
+  go_router: ^16.2.0
+  shared_preferences: ^2.0.0
+  audioplayers: ^6.0.0
+  confetti: 0.8.0
+  firebase_core: ^4.3.0
+  cloud_firestore: '>=5.5.0'
+  firebase_auth: ^6.1.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter:
+  uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/icons/dreamflow_icon.jpg
+  remove_alpha_ios: true
