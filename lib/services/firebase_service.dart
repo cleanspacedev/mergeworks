@@ -1,10 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
 class FirebaseService extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  FirebaseFunctions? _functions;
   
   User? _currentUser;
   bool _isInitialized = false;
@@ -34,6 +36,10 @@ class FirebaseService extends ChangeNotifier {
       } else {
         debugPrint('User already signed in: ${_currentUser!.uid}');
       }
+
+      // Initialize Cloud Functions (default region used by our functions)
+      _functions = FirebaseFunctions.instanceFor(region: 'us-central1');
+      debugPrint('Firebase Functions initialized for region us-central1');
       
       _isInitialized = true;
       notifyListeners();
@@ -41,6 +47,25 @@ class FirebaseService extends ChangeNotifier {
       debugPrint('Firebase service initialization error: $e');
       _isInitialized = true;
       notifyListeners();
+    }
+  }
+
+  /// Calls the test callable function `ping` deployed in us-central1.
+  /// Returns the message string, or an error description if failed.
+  Future<String> callTestPing({String name = 'tester'}) async {
+    try {
+      final fns = _functions ?? FirebaseFunctions.instanceFor(region: 'us-central1');
+      final result = await fns.httpsCallable('ping').call(<String, dynamic>{'name': name});
+      final data = result.data as Map<dynamic, dynamic>;
+      final msg = data['message']?.toString() ?? 'No message';
+      debugPrint('ping() -> ' + msg);
+      return msg;
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('Cloud Functions error: code=${e.code}, message=${e.message}');
+      return 'Error: ' + (e.message ?? e.code);
+    } catch (e) {
+      debugPrint('Unexpected error calling ping: $e');
+      return 'Unexpected error: ' + e.toString();
     }
   }
 

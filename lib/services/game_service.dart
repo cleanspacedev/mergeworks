@@ -414,22 +414,46 @@ class GameService extends ChangeNotifier {
 
   bool canMerge(List<GameItem> items) {
     if (items.isEmpty) return false;
-    final firstTier = items.first.tier;
-    final sameTier = items.every((item) => item.tier == firstTier);
+    // Separate wildcards from regular items
+    final nonWild = items.where((i) => !i.isWildcard).toList();
+    final wildCount = items.length - nonWild.length;
+    if (nonWild.isEmpty) return false; // need at least one real item
+
+    final baseTier = nonWild.first.tier;
+    final sameTier = nonWild.every((item) => item.tier == baseTier);
     if (!sameTier) return false;
-    if (firstTier >= _itemTemplates.length) return false;
-    if (items.length >= 3) return true;
-    // Allow 2-item merge if a power-merge charge is available
-    if (items.length == 2 && _powerMergeCharges > 0) return true;
+    if (baseTier >= _itemTemplates.length) return false;
+
+    final totalCount = nonWild.length + wildCount;
+    if (totalCount >= 3) return _playerStats.energy > 0; // require energy to proceed
+    // Allow 2-item merge (including wildcard + one item) if a power-merge charge is available
+    if (totalCount == 2 && _powerMergeCharges > 0) return _playerStats.energy > 0;
     return false;
   }
 
   Future<GameItem?> mergeItems(List<GameItem> items) async {
     if (!canMerge(items)) return null;
 
-    final tier = items.first.tier;
-    final newTier = tier + 1;
+    // Spend energy for a merge
+    if (!_spendEnergyIfPossible(1)) {
+      debugPrint('Merge blocked: not enough energy');
+      return null;
+    }
 
+    // Use the tier of non-wildcards as the base
+    final nonWild = items.where((i) => !i.isWildcard).toList();
+    final tier = nonWild.first.tier;
+
+    // Determine tier increment based on selection size (wildcards count toward size)
+    int increment;
+    if (items.length == 2) {
+      increment = 1;
+    } else {
+      final extra = (items.length - 3).clamp(0, 9999);
+      increment = 1 + (extra ~/ 2);
+    }
+
+    final newTier = tier + increment;
     if (newTier > _itemTemplates.length) return null;
 
     final centerX = items.map((e) => e.gridX!).reduce((a, b) => a + b) ~/ items.length;
@@ -536,6 +560,21 @@ class GameService extends ChangeNotifier {
     return true;
   }
 
+  bool _spendGemsIfPossible(int cost) {
+    if (_playerStats.gems < cost) {
+      debugPrint('Not enough gems. Needed: $cost, have: ${_playerStats.gems}');
+      return false;
+    }
+    _playerStats = _playerStats.copyWith(gems: _playerStats.gems - cost, updatedAt: DateTime.now());
+    return true;
+  }
+
+  bool _spendEnergyIfPossible(int cost) {
+    if (_playerStats.energy < cost) return false;
+    _playerStats = _playerStats.copyWith(energy: _playerStats.energy - cost, updatedAt: DateTime.now());
+    return true;
+  }
+
   Future<bool> abilityShuffleBoard({required int cost}) async {
     if (!_spendCoinsIfPossible(cost)) return false;
     try {
@@ -621,7 +660,83 @@ class GameService extends ChangeNotifier {
     }
   }
 
+  // Gem-consumable: clear a 3x3 area centered on the selected item
+  Future<bool> abilityBombArea(String centerItemId) async {
+    if (_playerStats.bombRunes <= 0) {
+      debugPrint('No Bomb Runes available.');
+      return false;
+    }
+    try {
+      final center = _gridItems.firstWhere((i) => i.id == centerItemId, orElse: () => throw 'Item not found');
+      if (center.gridX == null || center.gridY == null) return false;
+      final cx = center.gridX!;
+      final cy = center.gridY!;
+      final before = _gridItems.length;
+      _gridItems.removeWhere((i) {
+        if (i.gridX == null || i.gridY == null) return false;
+        final dx = (i.gridX! - cx).abs();
+        final dy = (i.gridY! - cy).abs();
+        return dx <= 1 && dy <= 1; // 3x3 area including center
+      });
+      if (_gridItems.length == before) {
+        debugPrint('Bomb Rune used but nothing to remove.');
+      }
+      _playerStats = _playerStats.copyWith(bombRunes: (_playerStats.bombRunes - 1).clamp(0, 9999), updatedAt: DateTime.now());
+      await _saveState();
+      notifyListeners();
+      debugPrint('Bomb Rune exploded at $cx,$cy');
+      return true;
+    } catch (e) {
+      debugPrint('Bomb ability failed: $e');
+      return false;
+    }
+  }
+
+  // Gem-consumable: upgrade a selected item by +1 tier
+  Future<bool> abilityTierUp(String itemId) async {
+    if (_playerStats.tierUpTokens <= 0) {
+      debugPrint('No Tier Up tokens available.');
+      return false;
+    }
+    try {
+      final idx = _gridItems.indexWhere((i) => i.id == itemId);
+      if (idx < 0) return false;
+      final item = _gridItems[idx];
+      if (item.isWildcard) return false;
+      if (item.tier >= _itemTemplates.length) return false;
+      final newTier = item.tier + 1;
+      final template = _itemTemplates[newTier]!;
+      _gridItems[idx] = item.copyWith(
+        tier: newTier,
+        name: template['name'],
+        emoji: template['emoji'],
+        description: template['description'],
+      );
+      _playerStats = _playerStats.copyWith(tierUpTokens: (_playerStats.tierUpTokens - 1).clamp(0, 9999), updatedAt: DateTime.now());
+      await _saveState();
+      notifyListeners();
+      debugPrint('Tier Up applied to ${item.id} -> tier $newTier');
+      return true;
+    } catch (e) {
+      debugPrint('Tier Up ability failed: $e');
+      return false;
+    }
+  }
+
   Future<bool> abilitySummonBurst({required int count, required int cost}) async {
+    // Guard: if the board is full, do not allow summoning
+    final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
+    int emptySlots = 0;
+    for (int y = 0; y < gridSize; y++) {
+      for (int x = 0; x < gridSize; x++) {
+        if (!occupied.contains('${x}_$y')) emptySlots++;
+      }
+    }
+    if (emptySlots == 0) {
+      debugPrint('Summon blocked: board is full (no empty slots).');
+      return false;
+    }
+
     if (!_spendCoinsIfPossible(cost)) return false;
     try {
       _fillRandomLowTiers(count: count, maxTier: 2);
@@ -736,5 +851,131 @@ class GameService extends ChangeNotifier {
       );
     }
     return discovered.values.toList();
+  }
+
+  // ===================== Specials & Ads =====================
+  Future<bool> purchaseSpecial(String id, int gemCost) async {
+    if (!_spendGemsIfPossible(gemCost)) return false;
+    switch (id) {
+      case 'special_wildcard_orb':
+        _playerStats = _playerStats.copyWith(wildcardOrbs: _playerStats.wildcardOrbs + 1, updatedAt: DateTime.now());
+        await _savePlayerStats();
+        notifyListeners();
+        return true;
+      case 'special_energy_booster':
+        final newMax = _playerStats.maxEnergy + 50;
+        final newEnergy = (_playerStats.energy + 50).clamp(0, newMax);
+        _playerStats = _playerStats.copyWith(maxEnergy: newMax, energy: newEnergy, updatedAt: DateTime.now());
+        await _savePlayerStats();
+        notifyListeners();
+        return true;
+      case 'special_power_merge_pack':
+        _powerMergeCharges += 3;
+        await _savePlayerStats();
+        notifyListeners();
+        return true;
+      case 'special_bomb_rune':
+        _playerStats = _playerStats.copyWith(bombRunes: _playerStats.bombRunes + 1, updatedAt: DateTime.now());
+        await _savePlayerStats();
+        notifyListeners();
+        return true;
+      case 'special_tier_up':
+        _playerStats = _playerStats.copyWith(tierUpTokens: _playerStats.tierUpTokens + 1, updatedAt: DateTime.now());
+        await _savePlayerStats();
+        notifyListeners();
+        return true;
+      case 'special_time_warp':
+        // Instant +100 energy
+        await addEnergy(100);
+        return true;
+      default:
+        // Unknown special -> refund
+        _playerStats = _playerStats.copyWith(gems: _playerStats.gems + gemCost, updatedAt: DateTime.now());
+        return false;
+    }
+  }
+
+  Future<void> markAdsRemoved() async {
+    _playerStats = _playerStats.copyWith(adRemovalPurchased: true, updatedAt: DateTime.now());
+    await _savePlayerStats();
+    notifyListeners();
+  }
+
+  Future<bool> abilityPlaceWildcard({String? nearItemId}) async {
+    if (_playerStats.wildcardOrbs <= 0) {
+      debugPrint('No wildcard orbs available.');
+      return false;
+    }
+    final target = _findPlacementNear(nearItemId: nearItemId);
+    if (target == null) {
+      debugPrint('No space to place a wildcard.');
+      return false;
+    }
+    final wildcard = GameItem(
+      id: _makeId(0),
+      name: 'Wildcard',
+      tier: 1, // visual only, not used for equality
+      emoji: '🃏',
+      description: 'Merges with anything',
+      gridX: target['x'],
+      gridY: target['y'],
+      isDiscovered: true,
+      isWildcard: true,
+    );
+    _gridItems.add(wildcard);
+    _playerStats = _playerStats.copyWith(wildcardOrbs: (_playerStats.wildcardOrbs - 1).clamp(0, 9999), updatedAt: DateTime.now());
+    await _saveState();
+    notifyListeners();
+    return true;
+  }
+
+  // Explicit placement at a specific empty cell
+  Future<bool> abilityPlaceWildcardAt(int x, int y) async {
+    if (_playerStats.wildcardOrbs <= 0) {
+      debugPrint('No wildcard orbs available.');
+      return false;
+    }
+    // Ensure within bounds and empty
+    if (x < 0 || y < 0 || x >= gridSize || y >= gridSize) return false;
+    final occupied = _gridItems.any((i) => i.gridX == x && i.gridY == y);
+    if (occupied) {
+      debugPrint('Target cell ($x,$y) is occupied.');
+      return false;
+    }
+    final wildcard = GameItem(
+      id: _makeId(0),
+      name: 'Wildcard',
+      tier: 1,
+      emoji: '🃏',
+      description: 'Merges with anything',
+      gridX: x,
+      gridY: y,
+      isDiscovered: true,
+      isWildcard: true,
+    );
+    _gridItems.add(wildcard);
+    _playerStats = _playerStats.copyWith(wildcardOrbs: (_playerStats.wildcardOrbs - 1).clamp(0, 9999), updatedAt: DateTime.now());
+    await _saveState();
+    notifyListeners();
+    return true;
+  }
+
+  Map<String, int>? _findPlacementNear({String? nearItemId}) {
+    if (nearItemId != null) {
+      final anchor = _gridItems.firstWhere((i) => i.id == nearItemId, orElse: () => _gridItems.isNotEmpty ? _gridItems.first : GameItem(id: 'none', name: 'x', tier: 1, emoji: 'x', description: 'x'));
+      if (anchor.gridX != null && anchor.gridY != null) {
+        final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
+        for (int dy = -1; dy <= 1; dy++) {
+          for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            final nx = (anchor.gridX ?? 0) + dx;
+            final ny = (anchor.gridY ?? 0) + dy;
+            if (nx < 0 || ny < 0 || nx >= gridSize || ny >= gridSize) continue;
+            if (!occupied.contains('${nx}_${ny}')) return {'x': nx, 'y': ny};
+          }
+        }
+      }
+    }
+    return _findEmptyGridSlot();
   }
 }

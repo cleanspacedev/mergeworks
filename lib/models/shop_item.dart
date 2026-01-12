@@ -8,6 +8,8 @@ class ShopItem {
   final int? gemAmount;
   final int? energyAmount;
   final bool isPurchased;
+  final int? gemCost; // for in-game currency purchases (Specials)
+  final int requiredLevel; // minimum level to unlock/purchase
 
   ShopItem({
     required this.id,
@@ -19,6 +21,8 @@ class ShopItem {
     this.gemAmount,
     this.energyAmount,
     this.isPurchased = false,
+    this.gemCost,
+    this.requiredLevel = 1,
   });
 
   ShopItem copyWith({
@@ -31,6 +35,8 @@ class ShopItem {
     int? gemAmount,
     int? energyAmount,
     bool? isPurchased,
+    int? gemCost,
+    int? requiredLevel,
   }) => ShopItem(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -41,6 +47,8 @@ class ShopItem {
     gemAmount: gemAmount ?? this.gemAmount,
     energyAmount: energyAmount ?? this.energyAmount,
     isPurchased: isPurchased ?? this.isPurchased,
+    gemCost: gemCost ?? this.gemCost,
+    requiredLevel: requiredLevel ?? this.requiredLevel,
   );
 
   Map<String, dynamic> toJson() => {
@@ -53,6 +61,8 @@ class ShopItem {
     'gemAmount': gemAmount,
     'energyAmount': energyAmount,
     'isPurchased': isPurchased,
+    'gemCost': gemCost,
+    'requiredLevel': requiredLevel,
   };
 
   factory ShopItem.fromJson(Map<String, dynamic> json) => ShopItem(
@@ -65,6 +75,8 @@ class ShopItem {
     gemAmount: json['gemAmount'],
     energyAmount: json['energyAmount'],
     isPurchased: json['isPurchased'] ?? false,
+    gemCost: json['gemCost'],
+    requiredLevel: json['requiredLevel'] ?? 1,
   );
 }
 
@@ -72,4 +84,5 @@ enum ShopItemType {
   gems,
   energy,
   adRemoval,
+  special,
 }

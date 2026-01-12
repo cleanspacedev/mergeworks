@@ -10,6 +10,7 @@ class GameItem {
   final bool isDiscovered;
   final bool canBePurchased;
   final int? purchaseCost;
+  final bool isWildcard; // merges with any tier
 
   GameItem({
     required this.id,
@@ -23,6 +24,7 @@ class GameItem {
     this.isDiscovered = false,
     this.canBePurchased = false,
     this.purchaseCost,
+    this.isWildcard = false,
   });
 
   GameItem copyWith({
@@ -37,6 +39,7 @@ class GameItem {
     bool? isDiscovered,
     bool? canBePurchased,
     int? purchaseCost,
+    bool? isWildcard,
   }) => GameItem(
     id: id ?? this.id,
     userId: userId ?? this.userId,
@@ -49,6 +52,7 @@ class GameItem {
     isDiscovered: isDiscovered ?? this.isDiscovered,
     canBePurchased: canBePurchased ?? this.canBePurchased,
     purchaseCost: purchaseCost ?? this.purchaseCost,
+    isWildcard: isWildcard ?? this.isWildcard,
   );
 
   Map<String, dynamic> toJson() => {
@@ -63,6 +67,7 @@ class GameItem {
     'isDiscovered': isDiscovered,
     'canBePurchased': canBePurchased,
     'purchaseCost': purchaseCost,
+    'isWildcard': isWildcard,
   };
 
   factory GameItem.fromJson(Map<String, dynamic> json) => GameItem(
@@ -77,5 +82,6 @@ class GameItem {
     isDiscovered: json['isDiscovered'] ?? false,
     canBePurchased: json['canBePurchased'] ?? false,
     purchaseCost: json['purchaseCost'],
+    isWildcard: json['isWildcard'] ?? false,
   );
 }

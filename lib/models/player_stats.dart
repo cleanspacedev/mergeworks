@@ -14,6 +14,9 @@ class PlayerStats {
   final DateTime? lastLoginDate;
   final bool hasCompletedTutorial;
   final bool adRemovalPurchased;
+  final int wildcardOrbs; // inventory of wildcard consumables
+  final int bombRunes; // clear 3x3 area consumable
+  final int tierUpTokens; // upgrade item by +1 tier consumable
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -31,6 +34,9 @@ class PlayerStats {
     this.lastLoginDate,
     this.hasCompletedTutorial = false,
     this.adRemovalPurchased = false,
+    this.wildcardOrbs = 0,
+    this.bombRunes = 0,
+    this.tierUpTokens = 0,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) : lastEnergyUpdate = lastEnergyUpdate ?? DateTime.now(),
@@ -51,6 +57,9 @@ class PlayerStats {
     DateTime? lastLoginDate,
     bool? hasCompletedTutorial,
     bool? adRemovalPurchased,
+    int? wildcardOrbs,
+    int? bombRunes,
+    int? tierUpTokens,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => PlayerStats(
@@ -67,6 +76,9 @@ class PlayerStats {
     lastLoginDate: lastLoginDate ?? this.lastLoginDate,
     hasCompletedTutorial: hasCompletedTutorial ?? this.hasCompletedTutorial,
     adRemovalPurchased: adRemovalPurchased ?? this.adRemovalPurchased,
+    wildcardOrbs: wildcardOrbs ?? this.wildcardOrbs,
+    bombRunes: bombRunes ?? this.bombRunes,
+    tierUpTokens: tierUpTokens ?? this.tierUpTokens,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -85,6 +97,9 @@ class PlayerStats {
     'lastLoginDate': lastLoginDate != null ? Timestamp.fromDate(lastLoginDate!) : null,
     'hasCompletedTutorial': hasCompletedTutorial,
     'adRemovalPurchased': adRemovalPurchased,
+    'wildcardOrbs': wildcardOrbs,
+    'bombRunes': bombRunes,
+    'tierUpTokens': tierUpTokens,
     'createdAt': Timestamp.fromDate(createdAt),
     'updatedAt': Timestamp.fromDate(updatedAt),
   };
@@ -110,6 +125,9 @@ class PlayerStats {
       lastLoginDate: json['lastLoginDate'] != null ? parseDate(json['lastLoginDate']) : null,
       hasCompletedTutorial: json['hasCompletedTutorial'] ?? false,
       adRemovalPurchased: json['adRemovalPurchased'] ?? false,
+      wildcardOrbs: json['wildcardOrbs'] ?? 0,
+      bombRunes: json['bombRunes'] ?? 0,
+      tierUpTokens: json['tierUpTokens'] ?? 0,
       createdAt: parseDate(json['createdAt']),
       updatedAt: parseDate(json['updatedAt']),
     );

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/services/game_service.dart';
+import 'package:mergeworks/services/firebase_service.dart';
 import 'package:mergeworks/theme.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -19,89 +20,114 @@ class SettingsScreen extends StatelessWidget {
           onPressed: () => context.pop(),
         ),
       ),
-      body: Consumer2<AudioService, GameService>(
-        builder: (context, audioService, gameService, child) {
-          return ListView(
-            padding: AppSpacing.paddingMd,
-            children: [
-              _buildSection(
-                context,
-                'Audio Settings 🔊',
-                [
-                  _SettingsTile(
-                    icon: Icons.volume_up,
-                    title: 'Sound Effects',
-                    subtitle: audioService.soundEnabled ? 'On' : 'Off',
-                    trailing: Switch(
-                      value: audioService.soundEnabled,
-                      onChanged: (_) => audioService.toggleSound(),
-                    ),
+      body: Consumer2<AudioService, GameService>(builder: (context, audioService, gameService, child) {
+        return ListView(
+          padding: AppSpacing.paddingMd,
+          children: [
+            _buildSection(
+              context,
+              'Audio Settings 🔊',
+              [
+                _SettingsTile(
+                  icon: Icons.volume_up,
+                  title: 'Sound Effects',
+                  subtitle: audioService.soundEnabled ? 'On' : 'Off',
+                  trailing: Switch(
+                    value: audioService.soundEnabled,
+                    onChanged: (_) => audioService.toggleSound(),
                   ),
-                  _SettingsTile(
-                    icon: Icons.music_note,
-                    title: 'Music',
-                    subtitle: audioService.musicEnabled ? 'On' : 'Off',
-                    trailing: Switch(
-                      value: audioService.musicEnabled,
-                      onChanged: (_) => audioService.toggleMusic(),
-                    ),
+                ),
+                _SettingsTile(
+                  icon: Icons.music_note,
+                  title: 'Music',
+                  subtitle: audioService.musicEnabled ? 'On' : 'Off',
+                  trailing: Switch(
+                    value: audioService.musicEnabled,
+                    onChanged: (_) => audioService.toggleMusic(),
                   ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _buildSection(
-                context,
-                'Game Stats 📊',
-                [
-                  _SettingsTile(
-                    icon: Icons.auto_awesome,
-                    title: 'Total Merges',
-                    subtitle: '${gameService.playerStats.totalMerges}',
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            _buildSection(
+              context,
+              'Game Stats 📊',
+              [
+                _SettingsTile(
+                  icon: Icons.auto_awesome,
+                  title: 'Total Merges',
+                  subtitle: '${gameService.playerStats.totalMerges}',
+                ),
+                _SettingsTile(
+                  icon: Icons.trending_up,
+                  title: 'Highest Tier',
+                  subtitle: 'Tier ${gameService.playerStats.highestTier}',
+                ),
+                _SettingsTile(
+                  icon: Icons.local_fire_department,
+                  title: 'Login Streak',
+                  subtitle: '${gameService.playerStats.loginStreak} days',
+                ),
+                _SettingsTile(
+                  icon: Icons.collections,
+                  title: 'Items Discovered',
+                  subtitle: '${gameService.playerStats.discoveredItems.length} / 18',
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            _buildSection(
+              context,
+              'About 📱',
+              [
+                _SettingsTile(
+                  icon: Icons.info,
+                  title: 'Version',
+                  subtitle: '1.0.0',
+                ),
+                _SettingsTile(
+                  icon: Icons.code,
+                  title: 'Built with',
+                  subtitle: 'Flutter & Dreamflow',
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            _buildSection(
+              context,
+              'Diagnostics 🧪',
+              [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm, vertical: AppSpacing.sm),
+                  child: FilledButton.icon(
+                    onPressed: () async {
+                      final svc = context.read<FirebaseService>();
+                      final result = await svc.callTestPing(name: 'settings');
+                      if (!context.mounted) return;
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Cloud Function Result'),
+                          content: Text(result),
+                          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK'))],
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.cloud_sync),
+                    label: const Text('Test Cloud Function (ping)'),
                   ),
-                  _SettingsTile(
-                    icon: Icons.trending_up,
-                    title: 'Highest Tier',
-                    subtitle: 'Tier ${gameService.playerStats.highestTier}',
-                  ),
-                  _SettingsTile(
-                    icon: Icons.local_fire_department,
-                    title: 'Login Streak',
-                    subtitle: '${gameService.playerStats.loginStreak} days',
-                  ),
-                  _SettingsTile(
-                    icon: Icons.collections,
-                    title: 'Items Discovered',
-                    subtitle: '${gameService.playerStats.discoveredItems.length} / 18',
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              _buildSection(
-                context,
-                'About 📱',
-                [
-                  _SettingsTile(
-                    icon: Icons.info,
-                    title: 'Version',
-                    subtitle: '1.0.0',
-                  ),
-                  _SettingsTile(
-                    icon: Icons.code,
-                    title: 'Built with',
-                    subtitle: 'Flutter & Dreamflow',
-                  ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              FilledButton.tonalIcon(
-                onPressed: () => _showResetDialog(context),
-                icon: const Icon(Icons.refresh, color: Colors.red),
-                label: const Text('Reset Game Progress', style: TextStyle(color: Colors.red)),
-              ),
-            ],
-          );
-        },
-      ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xxl),
+            FilledButton.tonalIcon(
+              onPressed: () => _showResetDialog(context),
+              icon: const Icon(Icons.refresh, color: Colors.red),
+              label: const Text('Reset Game Progress', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      }),
     );
   }
 

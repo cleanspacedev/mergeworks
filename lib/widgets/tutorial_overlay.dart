@@ -20,7 +20,7 @@ class _TutorialOverlayState extends State<TutorialOverlay> {
     },
     {
       'title': 'Drag to Merge 🎯',
-      'description': 'Drag 3 or more matching items together to merge them into a higher tier.',
+      'description': 'Drag 3 or more matching items together. Bigger groups create even higher tiers!',
     },
     {
       'title': 'Watch Your Energy ⚡',

@@ -31,6 +31,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   final Set<String> _animatingIds = {};
   int _invalidMergeAttempts = 0; // Tracks wrong selections to throttle messaging
   OverlayEntry? _activeCenterPopup; // Tracks the currently visible center popup
+  bool _placingWildcard = false; // When true, tapping an empty cell places a wildcard
 
   // Particle and measurement helpers
   final GlobalKey _gridKey = GlobalKey();
@@ -79,9 +80,27 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
         return;
       }
 
-      // Enforce same tier across the current selection
-      final selectedTier = gameService.gridItems.where((gi) => _highlightedItems.contains(gi.id)).firstOrNull?.tier ?? item.tier;
-      if (item.tier != selectedTier) {
+      // Enforce same tier across the current selection, but allow wildcards to join any selection
+      final selectedItems = gameService.gridItems.where((gi) => _highlightedItems.contains(gi.id)).toList();
+      final nonWildSelected = selectedItems.where((gi) => !gi.isWildcard).toList();
+      final hasWildcardInSelection = selectedItems.any((gi) => gi.isWildcard);
+      final nonWildTiers = nonWildSelected.map((e) => e.tier).toSet();
+
+      bool tierCompatible;
+      if (item.isWildcard) {
+        tierCompatible = true;
+      } else if (nonWildTiers.isEmpty) {
+        // Only wildcards selected so far -> any tier can start the base
+        tierCompatible = true;
+      } else if (nonWildTiers.length == 1 && nonWildTiers.first == item.tier) {
+        tierCompatible = true;
+      } else if (hasWildcardInSelection && nonWildTiers.length == 1 && nonWildTiers.first == item.tier) {
+        tierCompatible = true;
+      } else {
+        tierCompatible = false;
+      }
+
+      if (!tierCompatible) {
         // Reset selection to this new tier to keep UX predictable
         _highlightedItems
           ..clear()
@@ -97,7 +116,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
         return;
       }
 
-      // Same tier and connected -> add to selection
+      // Same tier (or wildcard) and connected -> add to selection
       _highlightedItems.add(item.id);
       _selectedItem = item; // last tapped becomes primary for single-item abilities
       _invalidMergeAttempts = 0;
@@ -177,6 +196,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
     if (_selectedItem == null) return;
 
     final itemsToMerge = gameService.gridItems.where((item) => _highlightedItems.contains(item.id)).toList();
+
+    if (gameService.playerStats.energy <= 0) {
+      _showMessage('Not enough energy ⚡');
+      return;
+    }
     
     if (!gameService.canMerge(itemsToMerge)) {
       _handleInvalidMergeAttempt();
@@ -538,12 +562,34 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                     );
                   }
 
-                  return Container(
+                  final emptyCell = Container(
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                       borderRadius: BorderRadius.circular(AppRadius.sm),
+                      border: _placingWildcard
+                          ? Border.all(color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.6), width: 2)
+                          : null,
                     ),
                   );
+                  if (_placingWildcard) {
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                      onTap: () async {
+                        final ok = await gameService.abilityPlaceWildcardAt(x, y);
+                        if (ok) {
+                          if (mounted) {
+                            setState(() => _placingWildcard = false);
+                            context.read<HapticsService>().successSoft();
+                            _showMessage('Placed a Wildcard 🃏');
+                          }
+                        } else {
+                          _showMessage('Can\'t place here');
+                        }
+                      },
+                      child: emptyCell,
+                    );
+                  }
+                  return emptyCell;
                 },
               ),
             ),
@@ -556,6 +602,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   Widget _buildBottomBar(BuildContext context, GameService gameService) {
     final canPowerMerge = _highlightedItems.length == 2 && _areTwoSameTier(gameService) && gameService.powerMergeCharges > 0;
     final canMergeNow = _highlightedItems.length >= 3 || canPowerMerge;
+    final isBoardFull = gameService.gridItems.length >= GameService.gridSize * GameService.gridSize;
     return Container(
       padding: AppSpacing.paddingMd,
       decoration: BoxDecoration(
@@ -580,11 +627,18 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   label: 'Summon x4',
                   cost: 80,
                   color: Theme.of(context).colorScheme.tertiary,
-                  onPressed: () async {
-                    final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
-                    if (ok) { context.read<HapticsService>().onSummon(); _showMessage('Summoned new items ✨'); }
-                    else _showMessage('Not enough coins');
-                  },
+                  onPressed: isBoardFull
+                      ? null
+                      : () async {
+                          final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
+                          if (ok) {
+                            context.read<HapticsService>().onSummon();
+                            _showMessage('Summoned new items ✨');
+                          } else {
+                            // If it failed, likely coins were insufficient (board-full is pre-disabled)
+                            _showMessage(isBoardFull ? 'Board is full' : 'Not enough coins');
+                          }
+                        },
                 ),
                 _AbilityButton(
                   icon: Icons.content_copy,
@@ -642,6 +696,58 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                     final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
                     if (ok) { context.read<HapticsService>().onPowerMergePurchased(); _showMessage('Power Merge ready ⚡'); }
                     else _showMessage('Not enough coins');
+                  },
+                ),
+                _AbilityButton(
+                  icon: Icons.auto_awesome,
+                  label: 'Wildcard',
+                  cost: 0,
+                  trailing: gameService.playerStats.wildcardOrbs > 0 ? 'x${gameService.playerStats.wildcardOrbs}' : null,
+                  color: Theme.of(context).colorScheme.primary,
+                  onPressed: gameService.playerStats.wildcardOrbs <= 0
+                      ? null
+                      : () async {
+                          setState(() => _placingWildcard = !_placingWildcard);
+                          if (_placingWildcard) {
+                            _showCenterPopup('Tap an empty slot to place 🃏', icon: Icons.touch_app);
+                          } else {
+                            _showMessage('Wildcard placement cancelled');
+                          }
+                        },
+                ),
+                _AbilityButton(
+                  icon: Icons.local_fire_department,
+                  label: 'Bomb',
+                  cost: 0,
+                  trailing: gameService.playerStats.bombRunes > 0 ? 'x${gameService.playerStats.bombRunes}' : null,
+                  color: Theme.of(context).colorScheme.error,
+                  onPressed: (gameService.playerStats.bombRunes <= 0 || _selectedItem == null)
+                      ? null
+                      : () async {
+                          final ok = await gameService.abilityBombArea(_selectedItem!.id);
+                          if (ok) {
+                            setState(() { _selectedItem = null; _highlightedItems.clear(); });
+                            context.read<HapticsService>().onAbilityClear();
+                            _showMessage('Boom! Cleared area 💥');
+                          } else {
+                            _showMessage('No Bomb Rune or no target');
+                          }
+                        },
+                ),
+                _AbilityButton(
+                  icon: Icons.upgrade,
+                  label: 'Tier+',
+                  cost: 0,
+                  trailing: gameService.playerStats.tierUpTokens > 0 ? 'x${gameService.playerStats.tierUpTokens}' : null,
+                  color: Theme.of(context).colorScheme.tertiary,
+                  onPressed: () async {
+                    if (gameService.playerStats.tierUpTokens <= 0) { _showMessage('No Ascension Shards'); return; }
+                    if (_selectedItem == null) { _showMessage('Select an item to upgrade'); return; }
+                    if (_selectedItem!.isWildcard) { _showMessage('Cannot upgrade a Wildcard'); return; }
+                    if (_selectedItem!.tier >= GameService.totalTiers) { _showMessage('Already at max tier'); return; }
+                    final ok = await gameService.abilityTierUp(_selectedItem!.id);
+                    if (ok) { context.read<HapticsService>().successSoft(); _showMessage('Tier increased ⤴️'); }
+                    else { _showMessage('Upgrade failed'); }
                   },
                 ),
               ].map((w) => Padding(padding: const EdgeInsets.only(right: 12), child: w)).toList(),
