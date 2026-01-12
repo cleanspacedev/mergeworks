@@ -6,6 +6,7 @@ import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/services/storage_service.dart';
 import 'package:mergeworks/models/spin_reward.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/services/haptics_service.dart';
 
 class DailySpinScreen extends StatefulWidget {
   const DailySpinScreen({super.key});
@@ -83,6 +84,9 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
           await gameService.addEnergy(reward.amount);
           break;
       }
+
+      // Haptics: emphasize big wins
+      context.read<HapticsService>().onSpinWin(type: reward.type, amount: reward.amount);
 
       setState(() {
         _isSpinning = false;

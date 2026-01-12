@@ -7,6 +7,7 @@ import 'package:mergeworks/services/quest_service.dart';
 import 'package:mergeworks/services/shop_service.dart';
 import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/services/firebase_service.dart';
+import 'package:mergeworks/services/haptics_service.dart';
 import 'firebase_options.dart';
 import 'theme.dart';
 import 'nav.dart';
@@ -55,6 +56,7 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(create: (_) => ShopService()),
         ChangeNotifierProvider(create: (_) => AudioService()..initialize()),
+        Provider(create: (_) => HapticsService()),
       ],
       child: MaterialApp.router(
         title: 'MergeWorks',

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'package:confetti/confetti.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/models/game_item.dart';
@@ -14,6 +15,7 @@ import 'package:mergeworks/widgets/grid_item_widget.dart';
 import 'package:mergeworks/widgets/tutorial_overlay.dart';
 import 'package:mergeworks/widgets/particle_field.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/services/haptics_service.dart';
 
 class GameBoardScreen extends StatefulWidget {
   const GameBoardScreen({super.key});
@@ -53,35 +55,125 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   }
 
   void _onItemTap(GameItem item, GameService gameService) {
-    if (_selectedItem?.id == item.id) {
-      setState(() {
-        _selectedItem = null;
-        _highlightedItems.clear();
-      });
-      return;
+    setState(() {
+      // Toggle off if already selected
+      if (_highlightedItems.contains(item.id)) {
+        _highlightedItems.remove(item.id);
+        // Maintain a valid _selectedItem for abilities
+        if (_highlightedItems.isEmpty) {
+          _selectedItem = null;
+        } else {
+          final fallback = gameService.gridItems.where((gi) => _highlightedItems.contains(gi.id)).firstOrNull;
+          _selectedItem = fallback;
+          // Ensure remaining selection stays as a single connected group
+          _pruneSelectionToConnected(gameService);
+        }
+        return;
+      }
+
+      // If nothing selected yet, start a new selection with this item
+      if (_highlightedItems.isEmpty) {
+        _highlightedItems.add(item.id);
+        _selectedItem = item; // anchor for abilities like duplicate/clear
+        _invalidMergeAttempts = 0;
+        return;
+      }
+
+      // Enforce same tier across the current selection
+      final selectedTier = gameService.gridItems.where((gi) => _highlightedItems.contains(gi.id)).firstOrNull?.tier ?? item.tier;
+      if (item.tier != selectedTier) {
+        // Reset selection to this new tier to keep UX predictable
+        _highlightedItems
+          ..clear()
+          ..add(item.id);
+        _selectedItem = item;
+        _invalidMergeAttempts = 0;
+        return;
+      }
+
+      // Enforce connectivity: new item must be adjacent to at least one currently selected tile
+      if (!_isConnectedToSelection(item, gameService)) {
+        _showCenterPopup('Selections must be adjacent', icon: Icons.link_off);
+        return;
+      }
+
+      // Same tier and connected -> add to selection
+      _highlightedItems.add(item.id);
+      _selectedItem = item; // last tapped becomes primary for single-item abilities
+      _invalidMergeAttempts = 0;
+    });
+  }
+
+  // Returns true if candidate is orthogonally adjacent to any currently selected item
+  bool _isConnectedToSelection(GameItem candidate, GameService gs) {
+    if (candidate.gridX == null || candidate.gridY == null) return false;
+    final selected = gs.gridItems.where((gi) => _highlightedItems.contains(gi.id)).toList();
+    for (final s in selected) {
+      if (s.gridX == null || s.gridY == null) continue;
+      if (_areAdjacent8(s, candidate)) return true;
+    }
+    return false;
+  }
+
+  // Orthogonal adjacency only (no diagonals)
+  bool _areOrthAdjacent(GameItem a, GameItem b) {
+    final ax = a.gridX, ay = a.gridY, bx = b.gridX, by = b.gridY;
+    if (ax == null || ay == null || bx == null || by == null) return false;
+    final dx = (ax - bx).abs();
+    final dy = (ay - by).abs();
+    return (dx == 1 && dy == 0) || (dx == 0 && dy == 1);
+  }
+
+  // 8-directional adjacency (includes diagonals)
+  bool _areAdjacent8(GameItem a, GameItem b) {
+    final ax = a.gridX, ay = a.gridY, bx = b.gridX, by = b.gridY;
+    if (ax == null || ay == null || bx == null || by == null) return false;
+    final dx = (ax - bx).abs();
+    final dy = (ay - by).abs();
+    return (dx <= 1 && dy <= 1) && !(dx == 0 && dy == 0);
+  }
+
+  // If current selection becomes disconnected (e.g., after removing a bridge),
+  // keep only the connected component anchored at _selectedItem (or any selected item if null)
+  void _pruneSelectionToConnected(GameService gs) {
+    if (_highlightedItems.isEmpty) return;
+    final idToItem = {for (final i in gs.gridItems) i.id: i};
+    String? anchorId = _selectedItem != null && _highlightedItems.contains(_selectedItem!.id)
+        ? _selectedItem!.id
+        : _highlightedItems.first;
+
+    // BFS over selected items using 8-direction adjacency
+    final Set<String> visited = {};
+    final List<String> queue = [];
+    if (anchorId != null) {
+      queue.add(anchorId);
+      visited.add(anchorId);
+    }
+    while (queue.isNotEmpty) {
+      final current = queue.removeAt(0);
+      final currentItem = idToItem[current];
+      if (currentItem == null) continue;
+      for (final otherId in _highlightedItems) {
+        if (visited.contains(otherId)) continue;
+        final otherItem = idToItem[otherId];
+        if (otherItem == null) continue;
+        if (_areAdjacent8(currentItem, otherItem)) {
+          visited.add(otherId);
+          queue.add(otherId);
+        }
+      }
     }
 
-    final nearbyItems = gameService.getItemsInRange(item.gridX!, item.gridY!, 1);
-    final matchingItems = nearbyItems.where((i) => i.tier == item.tier).toList();
-    matchingItems.add(item);
-
-    if (matchingItems.length >= 3 || (matchingItems.length >= 2 && gameService.powerMergeCharges > 0)) {
-      setState(() {
-        _selectedItem = item;
-        _highlightedItems.clear();
-        _highlightedItems.addAll(matchingItems.map((i) => i.id));
-        _invalidMergeAttempts = 0; // reset on valid selection
-      });
-    } else {
-      setState(() {
-        _selectedItem = null;
-        _highlightedItems.clear();
-      });
-      _handleInvalidMergeAttempt();
+    if (visited.length != _highlightedItems.length) {
+      _highlightedItems
+        ..clear()
+        ..addAll(visited);
+      // Ensure _selectedItem remains valid
+      _selectedItem = idToItem[anchorId!];
     }
   }
 
-  Future<void> _performMerge(GameService gameService, AudioService audioService, AchievementService achievementService, QuestService questService) async {
+  Future<void> _performMerge(GameService gameService, AudioService audioService, AchievementService achievementService, QuestService questService, HapticsService haptics) async {
     if (_selectedItem == null) return;
 
     final itemsToMerge = gameService.gridItems.where((item) => _highlightedItems.contains(item.id)).toList();
@@ -95,6 +187,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
     await _playMergeAnimation(itemsToMerge);
     final newItem = await gameService.mergeItems(itemsToMerge);
     if (newItem != null) {
+      // Haptics first so it lands with the visual
+      unawaited(haptics.onMerge(selectionCount: itemsToMerge.length, resultingTier: newItem.tier));
       setState(() {
         _selectedItem = null;
         _highlightedItems.clear();
@@ -488,7 +582,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   color: Theme.of(context).colorScheme.tertiary,
                   onPressed: () async {
                     final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
-                    if (ok) _showMessage('Summoned new items ✨');
+                    if (ok) { context.read<HapticsService>().onSummon(); _showMessage('Summoned new items ✨'); }
                     else _showMessage('Not enough coins');
                   },
                 ),
@@ -503,7 +597,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                       return;
                     }
                     final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
-                    if (ok) _showMessage('Duplicated item ➕');
+                    if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); }
                     else _showMessage('Action failed or not enough coins');
                   },
                 ),
@@ -520,6 +614,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                     final ok = await gameService.abilityClearItem(_selectedItem!.id, cost: 100);
                     if (ok) {
                       setState(() { _selectedItem = null; _highlightedItems.clear(); });
+                      context.read<HapticsService>().onAbilityClear();
                       _showMessage('Cleared item 🧹');
                     } else {
                       _showMessage('Action failed or not enough coins');
@@ -533,7 +628,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   color: Theme.of(context).colorScheme.secondary,
                   onPressed: () async {
                     final ok = await gameService.abilityShuffleBoard(cost: 150);
-                    if (ok) _showMessage('Shuffled the board 🔀');
+                    if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); }
                     else _showMessage('Not enough coins');
                   },
                 ),
@@ -545,7 +640,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   color: Theme.of(context).colorScheme.primaryContainer,
                   onPressed: () async {
                     final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
-                    if (ok) _showMessage('Power Merge ready ⚡');
+                    if (ok) { context.read<HapticsService>().onPowerMergePurchased(); _showMessage('Power Merge ready ⚡'); }
                     else _showMessage('Not enough coins');
                   },
                 ),
@@ -563,6 +658,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                             context.read<AudioService>(),
                             context.read<AchievementService>(),
                             context.read<QuestService>(),
+                            context.read<HapticsService>(),
                           )
                       : null,
                   icon: Icon(Icons.auto_awesome, color: Theme.of(context).colorScheme.onPrimary, size: 26),
