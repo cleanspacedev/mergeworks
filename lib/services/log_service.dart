@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 /// LogService captures recent log lines (print/debugPrint/Flutter errors) in a ring buffer.
 /// Use LogService.instance to access the singleton. Provides last(n) to retrieve recent lines.
 class LogService extends ChangeNotifier {
-  LogService._internal({this.capacity = 1000});
+  LogService._internal() : capacity = 1000;
   static final LogService instance = LogService._internal();
 
   final int capacity;

@@ -36,7 +36,7 @@ void main() async {
   }, (error, stack) {
     // Ensure uncaught errors are still logged
     LogService.instance.add('Uncaught error: $error');
-    if (stack != null) LogService.instance.add(stack.toString());
+    LogService.instance.add(stack.toString());
   }, zoneSpecification: LogService.zoneSpecForPrintCapture());
 }
 
