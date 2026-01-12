@@ -29,6 +29,56 @@ class SettingsScreen extends StatelessWidget {
         return ListView(
           padding: AppSpacing.paddingMd,
           children: [
+            // Move Game Stats to the top
+            _buildSection(
+              context,
+              'Game Stats 📊',
+              [
+                _SettingsTile(
+                  icon: Icons.auto_awesome,
+                  title: 'Total Merges',
+                  subtitle: '${gameService.playerStats.totalMerges}',
+                ),
+                _SettingsTile(
+                  icon: Icons.trending_up,
+                  title: 'Highest Tier',
+                  subtitle: 'Tier ${gameService.playerStats.highestTier}',
+                ),
+                _SettingsTile(
+                  icon: Icons.local_fire_department,
+                  title: 'Login Streak',
+                  subtitle: '${gameService.playerStats.loginStreak} days',
+                ),
+                _SettingsTile(
+                  icon: Icons.collections,
+                  title: 'Items Discovered',
+                  subtitle: '${gameService.playerStats.discoveredItems.length} / 18',
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            // Move platform buttons directly under Game Stats
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => context.read<GamePlatformService>().showLeaderboards(),
+                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                icon: const Icon(Icons.leaderboard),
+                label: const Text('Global Leaderboards'),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: () => context.read<GamePlatformService>().showAchievements(),
+                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('Platform Achievements'),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+
             _buildSection(
               context,
               'Accessibility ♿',
@@ -163,33 +213,6 @@ class SettingsScreen extends StatelessWidget {
             const SizedBox(height: AppSpacing.lg),
             _buildSection(
               context,
-              'Game Stats 📊',
-              [
-                _SettingsTile(
-                  icon: Icons.auto_awesome,
-                  title: 'Total Merges',
-                  subtitle: '${gameService.playerStats.totalMerges}',
-                ),
-                _SettingsTile(
-                  icon: Icons.trending_up,
-                  title: 'Highest Tier',
-                  subtitle: 'Tier ${gameService.playerStats.highestTier}',
-                ),
-                _SettingsTile(
-                  icon: Icons.local_fire_department,
-                  title: 'Login Streak',
-                  subtitle: '${gameService.playerStats.loginStreak} days',
-                ),
-                _SettingsTile(
-                  icon: Icons.collections,
-                  title: 'Items Discovered',
-                  subtitle: '${gameService.playerStats.discoveredItems.length} / 18',
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            _buildSection(
-              context,
               'About 📱',
               [
                 _SettingsTile(
@@ -198,27 +221,6 @@ class SettingsScreen extends StatelessWidget {
                   subtitle: '1.0.0',
                 ),
               ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
-            // Online play / platform services
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () => context.read<GamePlatformService>().showLeaderboards(),
-                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-                icon: const Icon(Icons.leaderboard),
-                label: const Text('Global Leaderboards'),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonalIcon(
-                onPressed: () => context.read<GamePlatformService>().showAchievements(),
-                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-                icon: const Icon(Icons.emoji_events),
-                label: const Text('Platform Achievements'),
-              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             SizedBox(
