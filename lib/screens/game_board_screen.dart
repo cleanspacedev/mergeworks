@@ -28,6 +28,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   final Set<String> _highlightedItems = {};
   final Set<String> _animatingIds = {};
   int _invalidMergeAttempts = 0; // Tracks wrong selections to throttle messaging
+  OverlayEntry? _activeCenterPopup; // Tracks the currently visible center popup
 
   // Particle and measurement helpers
   final GlobalKey _gridKey = GlobalKey();
@@ -126,9 +127,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   void _handleInvalidMergeAttempt() {
     if (!mounted) return;
     _invalidMergeAttempts++;
-    // Cancel any currently visible snackbar to prevent stacking
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
     // Show on first wrong attempt, then every 20th wrong attempt
     if (_invalidMergeAttempts == 1 || _invalidMergeAttempts % 20 == 0) {
       _showMergeRequirementMessage();
@@ -137,25 +135,106 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
 
   void _showMergeRequirementMessage() {
     if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      const SnackBar(
-        content: Text('Need 3 or more to merge'),
-        duration: Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    _showCenterPopup('Need 3 or more to merge', icon: Icons.info_outline);
   }
 
   void _showMessage(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    _showCenterPopup(message, icon: Icons.auto_awesome);
+  }
+
+  void _showCenterPopup(String message, {IconData? icon, Duration duration = const Duration(milliseconds: 1600)}) {
+    try {
+      // Remove any existing popup to avoid stacking
+      _activeCenterPopup?.remove();
+      _activeCenterPopup = null;
+
+      final overlay = Overlay.of(context);
+      if (overlay == null) return;
+
+      final Color bg = Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.95);
+      final Color border = Theme.of(context).colorScheme.outline.withValues(alpha: 0.25);
+      final Color onBg = Theme.of(context).colorScheme.onSurface;
+
+      late AnimationController controller;
+      late CurvedAnimation curve;
+
+      controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 200), reverseDuration: const Duration(milliseconds: 140));
+      curve = CurvedAnimation(parent: controller, curve: Curves.easeOutBack, reverseCurve: Curves.easeIn);
+
+      final entry = OverlayEntry(
+        builder: (ctx) {
+          return Positioned.fill(
+            child: IgnorePointer(
+              ignoring: true,
+              child: Center(
+                child: AnimatedBuilder(
+                  animation: curve,
+                  builder: (context, _) {
+                    final double t = curve.value;
+                    return Opacity(
+                      opacity: t.clamp(0.0, 1.0),
+                      child: Transform.scale(
+                        scale: (0.9 + 0.1 * t).clamp(0.9, 1.0),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: bg,
+                            borderRadius: BorderRadius.circular(AppRadius.lg),
+                            border: Border.all(color: border, width: 1),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (icon != null) ...[
+                                Icon(icon, color: onBg, size: 22),
+                                const SizedBox(width: 10),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  message,
+                                  style: context.textStyles.titleSmall?.medium.withColor(onBg),
+                                  softWrap: true,
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 2,
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
+      );
+
+      overlay.insert(entry);
+      _activeCenterPopup = entry;
+      controller.forward();
+
+      Future.delayed(duration, () async {
+        try {
+          if (!mounted) {
+            entry.remove();
+            controller.dispose();
+            return;
+          }
+          await controller.reverse();
+        } catch (_) {}
+        finally {
+          entry.remove();
+          _activeCenterPopup = null;
+          controller.dispose();
+        }
+      });
+    } catch (e) {
+      debugPrint('Center popup failed: $e');
+    }
   }
 
   @override
