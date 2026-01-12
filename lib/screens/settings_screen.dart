@@ -9,6 +9,7 @@ import 'package:mergeworks/services/log_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
+import 'package:mergeworks/services/game_platform_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -197,6 +198,27 @@ class SettingsScreen extends StatelessWidget {
                   subtitle: '1.0.0',
                 ),
               ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            // Online play / platform services
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => context.read<GamePlatformService>().showLeaderboards(),
+                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                icon: const Icon(Icons.leaderboard),
+                label: const Text('Global Leaderboards'),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: () => context.read<GamePlatformService>().showAchievements(),
+                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                icon: const Icon(Icons.emoji_events),
+                label: const Text('Platform Achievements'),
+              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             SizedBox(

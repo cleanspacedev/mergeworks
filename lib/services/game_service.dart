@@ -3,10 +3,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/models/player_stats.dart';
 import 'package:mergeworks/services/firebase_service.dart';
+import 'package:mergeworks/services/game_platform_service.dart';
+import 'package:mergeworks/services/game_platform_config.dart';
 import 'dart:math';
 
 class GameService extends ChangeNotifier {
   FirebaseService? _firebaseService;
+  GamePlatformService? _platformService;
   // Unique ID generator sequence to avoid duplicate IDs when creating items rapidly
   int _idSeq = 0;
   String _makeId(int tier) => 'gi_${DateTime.now().microsecondsSinceEpoch}_${_idSeq++}_t$tier';
@@ -58,6 +61,9 @@ class GameService extends ChangeNotifier {
     if (_firebaseService!.isInitialized && _firebaseService!.isAuthenticated) {
       initialize();
     }
+  }
+  void setPlatformService(GamePlatformService service) {
+    _platformService = service;
   }
   
   void _onAuthStateChanged() {
@@ -244,6 +250,16 @@ class GameService extends ChangeNotifier {
 
       _updateEnergy();
       await _checkDailyLogin();
+      // Submit initial scores to platform leaderboards (best-effort)
+      try {
+        await _platformService?.submitAllScores(
+          totalMerges: _playerStats.totalMerges,
+          highestTier: _playerStats.highestTier,
+          level: currentLevel,
+        );
+      } catch (e) {
+        debugPrint('Platform score submit on init failed: $e');
+      }
     } catch (e) {
       debugPrint('Failed to initialize game: $e');
       _initializeStarterItems();
@@ -560,6 +576,40 @@ class GameService extends ChangeNotifier {
 
     await _saveState();
     notifyListeners();
+
+    // === Platform leaderboards & achievements ===
+    try {
+      // Submit scores
+      await _platformService?.submitAllScores(
+        totalMerges: _playerStats.totalMerges,
+        highestTier: _playerStats.highestTier,
+        level: currentLevel,
+      );
+      // First merge achievement
+      if (_playerStats.totalMerges == 1) {
+        await _platformService?.unlock(GamePlatformIds.achieveFirstMerge);
+      }
+      // Tier milestones
+      if (newTier >= 5) {
+        await _platformService?.unlock(GamePlatformIds.achieveTier5);
+      }
+      if (newTier >= 10) {
+        await _platformService?.unlock(GamePlatformIds.achieveTier10);
+      }
+      if (newTier >= 15) {
+        await _platformService?.unlock(GamePlatformIds.achieveTier15);
+      }
+      // Level milestones
+      final lvl = currentLevel;
+      if (lvl >= 5) {
+        await _platformService?.unlock(GamePlatformIds.achieveLevel5);
+      }
+      if (lvl >= 10) {
+        await _platformService?.unlock(GamePlatformIds.achieveLevel10);
+      }
+    } catch (e) {
+      debugPrint('Platform updates after merge failed: $e');
+    }
     return newItem;
   }
 

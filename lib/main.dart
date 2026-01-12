@@ -9,6 +9,7 @@ import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/services/firebase_service.dart';
 import 'package:mergeworks/services/haptics_service.dart';
 import 'package:mergeworks/services/ads_service.dart';
+import 'package:mergeworks/services/game_platform_service.dart';
 import 'firebase_options.dart';
 import 'theme.dart';
 import 'nav.dart';
@@ -48,10 +49,12 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: LogService.instance),
         ChangeNotifierProvider(create: (_) => FirebaseService()..initialize()),
-        ChangeNotifierProxyProvider<FirebaseService, GameService>(
+        ChangeNotifierProvider(create: (_) => GamePlatformService()..initialize()),
+        ChangeNotifierProxyProvider2<FirebaseService, GamePlatformService, GameService>(
           create: (_) => GameService(),
-          update: (_, firebaseService, gameService) {
+          update: (_, firebaseService, platformService, gameService) {
             gameService!.setFirebaseService(firebaseService);
+            gameService.setPlatformService(platformService);
             return gameService;
           },
         ),
