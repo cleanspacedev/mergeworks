@@ -260,6 +260,35 @@ ThemeData get darkTheme => ThemeData(
   textTheme: _buildTextTheme(Brightness.dark),
 );
 
+/// Higher-contrast variants of light and dark themes for accessibility
+ThemeData highContrastLightTheme() {
+  final base = lightTheme;
+  final cs = base.colorScheme;
+  final high = cs.copyWith(
+    onSurface: Colors.black,
+    onSurfaceVariant: Colors.black,
+    surface: Colors.white,
+    surfaceContainerHighest: Colors.white,
+    primary: cs.primary,
+    onPrimary: cs.onPrimary,
+    outline: cs.outline.withValues(alpha: 0.6),
+  );
+  return base.copyWith(colorScheme: high);
+}
+
+ThemeData highContrastDarkTheme() {
+  final base = darkTheme;
+  final cs = base.colorScheme;
+  final high = cs.copyWith(
+    onSurface: Colors.white,
+    onSurfaceVariant: Colors.white,
+    surface: const Color(0xFF0A0A0A),
+    surfaceContainerHighest: const Color(0xFF0F0F0F),
+    outline: cs.outline.withValues(alpha: 0.7),
+  );
+  return base.copyWith(colorScheme: high);
+}
+
 /// Build text theme using Inter font family
 TextTheme _buildTextTheme(Brightness brightness) {
   return TextTheme(

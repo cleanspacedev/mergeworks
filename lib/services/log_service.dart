@@ -19,6 +19,7 @@ class LogService extends ChangeNotifier {
       // Trim oldest entries to maintain capacity
       _buffer.removeRange(0, _buffer.length - capacity);
     }
+    notifyListeners();
   }
 
   /// Returns a copy of the most recent [n] lines (or all if fewer available).

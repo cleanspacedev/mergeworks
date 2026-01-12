@@ -14,6 +14,9 @@ import 'theme.dart';
 import 'nav.dart';
 import 'package:mergeworks/services/log_service.dart';
 import 'dart:async';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:mergeworks/services/accessibility_service.dart';
+import 'package:mergeworks/widgets/captions_overlay.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -68,16 +71,52 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(create: (_) => ShopService()..initialize()),
         ChangeNotifierProvider(create: (_) => AudioService()..initialize()),
+        ChangeNotifierProvider(create: (_) => AccessibilityService()..initialize()),
         Provider(create: (_) => HapticsService()),
         Provider.value(value: AdsService.instance),
       ],
-      child: MaterialApp.router(
-        title: 'MergeWorks',
-        debugShowCheckedModeBanner: false,
-        theme: lightTheme,
-        darkTheme: darkTheme,
-        themeMode: ThemeMode.system,
-        routerConfig: AppRouter.router,
+      child: Consumer<AccessibilityService>(
+        builder: (context, a11y, _) {
+          final ThemeMode mode = a11y.forceDark ? ThemeMode.dark : ThemeMode.system;
+          final effectiveLight = a11y.highContrast ? highContrastLightTheme() : lightTheme;
+          final effectiveDark = a11y.highContrast ? highContrastDarkTheme() : darkTheme;
+          return MaterialApp.router(
+            title: 'MergeWorks',
+            debugShowCheckedModeBanner: false,
+            theme: effectiveLight,
+            darkTheme: effectiveDark,
+            themeMode: mode,
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [Locale('en')],
+            localeResolutionCallback: (deviceLocale, supported) {
+              // Default to device locale if supported; otherwise fall back to English.
+              if (deviceLocale == null) return const Locale('en');
+              for (final l in supported) {
+                if (l.languageCode == deviceLocale.languageCode) return l;
+              }
+              return const Locale('en');
+            },
+            routerConfig: AppRouter.router,
+            builder: (context, child) {
+              // Text scale and captions overlay
+              final mq = MediaQuery.of(context);
+              final scaled = mq.copyWith(textScaler: TextScaler.linear(a11y.textScale));
+              return MediaQuery(
+                data: scaled,
+                child: Stack(
+                  children: [
+                    if (child != null) child,
+                    const CaptionsOverlay(),
+                  ],
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }

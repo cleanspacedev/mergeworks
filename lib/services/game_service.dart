@@ -68,21 +68,30 @@ class GameService extends ChangeNotifier {
 
   static const int gridSize = 6;
 
-  // Level structure: Level 1 has 18 tiers, subsequent levels add 10 tiers each.
-  // We dynamically build templates so we can scale without adding assets.
+  // Level templates (for naming/emoji generation only). This is NOT used for player
+  // progression anymore.
+  // We keep the original content cadence for template generation, but player level
+  // progression below uses a fast-early, slow-late curve based on discovered tiers.
   static final List<int> _levelTierCounts = [18, 10, 10, 10, 10, 10]; // extendable
   static late final Map<int, Map<String, dynamic>> _itemTemplates = _buildTemplates();
   static int get totalTiers => _itemTemplates.length;
-  static int _levelForTier(int tier) {
-    int acc = 0;
-    for (int i = 0; i < _levelTierCounts.length; i++) {
-      acc += _levelTierCounts[i];
-      if (tier <= acc) return i + 1;
+  static int _levelForTier(int count) {
+    // Fast early, slower later: reach new levels quickly at first, then
+    // per-level requirements increase by +1 each level (triangular growth).
+    // Examples (cumulative discovered unique tiers -> level):
+    // 1 -> L1, 3 -> L2, 6 -> L3, 10 -> L4, 15 -> L5, 21 -> L6, ...
+    if (count <= 1) return 1;
+    int level = 1;
+    int cumulative = 1; // tiers required to be at current level
+    int increment = 2;  // tiers needed to reach the next level initially
+    while (count > cumulative) {
+      cumulative += increment;
+      level++;
+      // Make it progressively slower: increase requirement a little every level
+      increment += 1;
+      if (level > 999) break; // safety guard
     }
-    // Beyond predefined, continue grouping by 10s
-    final beyond = tier - acc;
-    final extraLevels = (beyond / 10).ceil();
-    return _levelTierCounts.length + extraLevels;
+    return level;
   }
   // Link levels to collection progress: your level is determined by how many unique tiers
   // you have discovered in the collection book (not just the highest on-board tier)

@@ -1113,53 +1113,59 @@ class _AbilityButton extends StatelessWidget {
     final disabledBg = cs.surfaceContainerHighest;
     final disabledFg = cs.onSurfaceVariant;
     final fg = isDisabled ? disabledFg : activeFg;
-    return ElevatedButton(
-      onPressed: onPressed,
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color,
-        foregroundColor: activeFg,
-        disabledBackgroundColor: disabledBg,
-        disabledForegroundColor: disabledFg,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        minimumSize: const Size(0, 36),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        visualDensity: VisualDensity.compact,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        elevation: 0,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: fg, size: 18),
-          const SizedBox(width: 6),
-          Text(label, style: context.textStyles.labelMedium?.bold.withColor(fg)),
-          if (cost > 0) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              decoration: BoxDecoration(
-                color: fg.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Row(children: [
-                const Text('🪙', style: TextStyle(fontSize: 12)),
-                const SizedBox(width: 3),
-                Text('$cost', style: context.textStyles.labelSmall?.bold.withColor(fg)),
-              ]),
-            ),
-          ],
-          if (trailing != null) ...[
+    return Semantics(
+      label: 'Ability: $label${cost > 0 ? ', cost $cost coins' : ''}',
+      hint: isDisabled ? 'Unavailable' : 'Double tap to activate ability',
+      button: true,
+      enabled: !isDisabled,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: activeFg,
+          disabledBackgroundColor: disabledBg,
+          disabledForegroundColor: disabledFg,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          minimumSize: const Size(0, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          elevation: 0,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: fg, size: 18),
             const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: fg.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(6),
+            Text(label, style: context.textStyles.labelMedium?.bold.withColor(fg)),
+            if (cost > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                decoration: BoxDecoration(
+                  color: fg.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(children: [
+                  const Text('🪙', style: TextStyle(fontSize: 12)),
+                  const SizedBox(width: 3),
+                  Text('$cost', style: context.textStyles.labelSmall?.bold.withColor(fg)),
+                ]),
               ),
-              child: Text(trailing!, style: context.textStyles.labelSmall?.bold.withColor(fg)),
-            ),
+            ],
+            if (trailing != null) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: fg.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(trailing!, style: context.textStyles.labelSmall?.bold.withColor(fg)),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }

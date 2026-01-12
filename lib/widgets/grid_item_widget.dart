@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:provider/provider.dart';
+import 'package:mergeworks/services/accessibility_service.dart';
 
 class GridItemWidget extends StatefulWidget {
   final GameItem item;
@@ -43,63 +45,73 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     final size = _getItemSize(widget.item.tier);
+    final a11y = context.watch<AccessibilityService>();
     
-    return GestureDetector(
-      onTap: widget.onTap,
-      child: AnimatedScale(
-        scale: widget.isHighlighted ? 1.18 : 1.0,
-        duration: const Duration(milliseconds: 200),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: widget.isHighlighted
-                  ? [
+    return Semantics(
+      label: 'Tier ${widget.item.tier} item',
+      hint: a11y.voiceOverHints ? 'Double tap to select or merge' : null,
+      button: true,
+      enabled: widget.onTap != null,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedScale(
+          scale: widget.isHighlighted ? 1.18 : 1.0,
+          duration: Duration(milliseconds: a11y.reducedMotion ? 0 : 200),
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: widget.isHighlighted
+                    ? [
                       Theme.of(context).colorScheme.secondary.withValues(alpha: 0.3),
                       Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.3),
                     ]
-                  : [
+                    : [
                       Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
                       Theme.of(context).colorScheme.surfaceContainerHighest,
                     ],
+              ),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: widget.isHighlighted
+                  ? Border.all(
+                      color: Theme.of(context).colorScheme.secondary,
+                      width: 2,
+                    )
+                  : null,
+              boxShadow: widget.isHighlighted
+                  ? [
+                      BoxShadow(
+                        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.4),
+                        blurRadius: 8,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : null,
             ),
-            borderRadius: BorderRadius.circular(AppRadius.md),
-            border: widget.isHighlighted
-                ? Border.all(
-                    color: Theme.of(context).colorScheme.secondary,
-                    width: 2,
-                  )
-                : null,
-            boxShadow: widget.isHighlighted
-                ? [
-                    BoxShadow(
-                      color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.4),
-                      blurRadius: 8,
-                      spreadRadius: 2,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (a11y.reducedMotion)
+                    Text(widget.item.emoji, style: TextStyle(fontSize: size))
+                  else
+                    ScaleTransition(
+                      scale: widget.isHighlighted ? _scaleAnimation : const AlwaysStoppedAnimation(1.0),
+                      child: Text(
+                        widget.item.emoji,
+                        style: TextStyle(fontSize: size),
+                      ),
                     ),
-                  ]
-                : null,
-          ),
-          child: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ScaleTransition(
-                  scale: widget.isHighlighted ? _scaleAnimation : const AlwaysStoppedAnimation(1.0),
-                  child: Text(
-                    widget.item.emoji,
-                    style: TextStyle(fontSize: size),
+                  const SizedBox(height: 2),
+                  Text(
+                    'T${widget.item.tier}',
+                    style: context.textStyles.labelSmall?.bold.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'T${widget.item.tier}',
-                  style: context.textStyles.labelSmall?.bold.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

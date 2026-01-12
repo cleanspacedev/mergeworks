@@ -8,6 +8,7 @@ import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/log_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:mergeworks/services/accessibility_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -23,10 +24,71 @@ class SettingsScreen extends StatelessWidget {
           onPressed: () => context.pop(),
         ),
       ),
-      body: Consumer2<AudioService, GameService>(builder: (context, audioService, gameService, child) {
+      body: Consumer3<AudioService, GameService, AccessibilityService>(builder: (context, audioService, gameService, a11y, child) {
         return ListView(
           padding: AppSpacing.paddingMd,
           children: [
+            _buildSection(
+              context,
+              'Accessibility ♿',
+              [
+                _SettingsTile(
+                  icon: Icons.record_voice_over,
+                  title: 'VoiceOver',
+                  subtitle: a11y.voiceOverHints ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.voiceOverHints, onChanged: a11y.setVoiceOverHints),
+                ),
+                _SettingsTile(
+                  icon: Icons.mic,
+                  title: 'Voice Control',
+                  subtitle: a11y.voiceControlHints ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.voiceControlHints, onChanged: a11y.setVoiceControlHints),
+                ),
+                _SettingsTile(
+                  icon: Icons.format_size,
+                  title: 'Larger Text',
+                  subtitle: a11y.largerText ? '200%' : '100%',
+                  trailing: Switch(value: a11y.largerText, onChanged: a11y.setLargerText),
+                ),
+                _SettingsTile(
+                  icon: Icons.dark_mode,
+                  title: 'Dark Interface',
+                  subtitle: a11y.forceDark ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.forceDark, onChanged: a11y.setForceDark),
+                ),
+                _SettingsTile(
+                  icon: Icons.texture,
+                  title: 'Differentiate Without Color Alone',
+                  subtitle: a11y.differentiateWithoutColor ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.differentiateWithoutColor, onChanged: a11y.setDifferentiateWithoutColor),
+                ),
+                _SettingsTile(
+                  icon: Icons.contrast,
+                  title: 'Sufficient Contrast',
+                  subtitle: a11y.highContrast ? 'High' : 'Standard',
+                  trailing: Switch(value: a11y.highContrast, onChanged: a11y.setHighContrast),
+                ),
+                _SettingsTile(
+                  icon: Icons.motion_photos_off,
+                  title: 'Reduced Motion',
+                  subtitle: a11y.reducedMotion ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.reducedMotion, onChanged: a11y.setReducedMotion),
+                ),
+                _SettingsTile(
+                  icon: Icons.closed_caption,
+                  title: 'Captions',
+                  subtitle: a11y.captionsEnabled ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.captionsEnabled, onChanged: a11y.setCaptionsEnabled),
+                ),
+                _SettingsTile(
+                  icon: Icons.description,
+                  title: 'Audio Descriptions',
+                  subtitle: a11y.audioDescriptions ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.audioDescriptions, onChanged: a11y.setAudioDescriptions),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
             _buildSection(
               context,
               'Audio Settings 🔊',
@@ -40,6 +102,29 @@ class SettingsScreen extends StatelessWidget {
                     onChanged: (_) => audioService.toggleSound(),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.tune, size: 16),
+                          const SizedBox(width: 6),
+                          Text('SFX Volume (${(audioService.sfxVolume * 100).round()}%)', style: context.textStyles.labelMedium),
+                        ],
+                      ),
+                      Slider(
+                        value: audioService.sfxVolume,
+                        onChanged: audioService.soundEnabled ? (v) => audioService.setSfxVolume(v) : null,
+                        min: 0,
+                        max: 1,
+                        divisions: 20,
+                        label: '${(audioService.sfxVolume * 100).round()}%'.toString(),
+                      ),
+                    ],
+                  ),
+                ),
                 _SettingsTile(
                   icon: Icons.music_note,
                   title: 'Music',
@@ -47,6 +132,29 @@ class SettingsScreen extends StatelessWidget {
                   trailing: Switch(
                     value: audioService.musicEnabled,
                     onChanged: (_) => audioService.toggleMusic(),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.tune, size: 16),
+                          const SizedBox(width: 6),
+                          Text('Music Volume (${(audioService.musicVolume * 100).round()}%)', style: context.textStyles.labelMedium),
+                        ],
+                      ),
+                      Slider(
+                        value: audioService.musicVolume,
+                        onChanged: audioService.musicEnabled ? (v) => audioService.setMusicVolume(v) : null,
+                        min: 0,
+                        max: 1,
+                        divisions: 20,
+                        label: '${(audioService.musicVolume * 100).round()}%'.toString(),
+                      ),
+                    ],
                   ),
                 ),
               ],
