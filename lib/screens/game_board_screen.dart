@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'package:confetti/confetti.dart';
 import 'package:go_router/go_router.dart';
@@ -24,7 +23,7 @@ class GameBoardScreen extends StatefulWidget {
   State<GameBoardScreen> createState() => _GameBoardScreenState();
 }
 
-class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProviderStateMixin {
+class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderStateMixin {
   late ConfettiController _confettiController;
   GameItem? _selectedItem;
   final Set<String> _highlightedItems = {};
@@ -42,6 +41,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   List<_Ghost> _ghosts = [];
   Offset? _targetCenter;
 
+  // Spawn animation state (reverse of merge)
+  AnimationController? _spawnController;
+  List<_SpawnGhost> _spawnGhosts = [];
+  Offset? _spawnOrigin;
+
   @override
   void initState() {
     super.initState();
@@ -51,8 +55,16 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   @override
   void dispose() {
     _mergeController?.dispose();
+    _spawnController?.dispose();
     _confettiController.dispose();
     super.dispose();
+  }
+
+  // Helper to safely trigger rebuilds from extension methods without using the
+  // protected setState outside of this State subclass.
+  void _refresh() {
+    if (!mounted) return;
+    setState(() {});
   }
 
   void _onItemTap(GameItem item, GameService gameService) {
@@ -135,13 +147,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   }
 
   // Orthogonal adjacency only (no diagonals)
-  bool _areOrthAdjacent(GameItem a, GameItem b) {
-    final ax = a.gridX, ay = a.gridY, bx = b.gridX, by = b.gridY;
-    if (ax == null || ay == null || bx == null || by == null) return false;
-    final dx = (ax - bx).abs();
-    final dy = (ay - by).abs();
-    return (dx == 1 && dy == 0) || (dx == 0 && dy == 1);
-  }
 
   // 8-directional adjacency (includes diagonals)
   bool _areAdjacent8(GameItem a, GameItem b) {
@@ -157,17 +162,15 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   void _pruneSelectionToConnected(GameService gs) {
     if (_highlightedItems.isEmpty) return;
     final idToItem = {for (final i in gs.gridItems) i.id: i};
-    String? anchorId = _selectedItem != null && _highlightedItems.contains(_selectedItem!.id)
+    String anchorId = _selectedItem != null && _highlightedItems.contains(_selectedItem!.id)
         ? _selectedItem!.id
         : _highlightedItems.first;
 
     // BFS over selected items using 8-direction adjacency
     final Set<String> visited = {};
     final List<String> queue = [];
-    if (anchorId != null) {
-      queue.add(anchorId);
-      visited.add(anchorId);
-    }
+    queue.add(anchorId);
+    visited.add(anchorId);
     while (queue.isNotEmpty) {
       final current = queue.removeAt(0);
       final currentItem = idToItem[current];
@@ -188,7 +191,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
         ..clear()
         ..addAll(visited);
       // Ensure _selectedItem remains valid
-      _selectedItem = idToItem[anchorId!];
+      _selectedItem = idToItem[anchorId];
     }
   }
 
@@ -268,7 +271,6 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
       _activeCenterPopup = null;
 
       final overlay = Overlay.of(context);
-      if (overlay == null) return;
 
       final Color bg = Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.95);
       final Color border = Theme.of(context).colorScheme.outline.withValues(alpha: 0.25);
@@ -359,6 +361,13 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
   Widget build(BuildContext context) {
     return Consumer4<GameService, AudioService, AchievementService, QuestService>(
       builder: (context, gameService, audioService, achievementService, questService, child) {
+        // After the frame, check for newly spawned items to animate
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          final ev = gameService.takeLastSpawnEvent();
+          if (ev != null) {
+            _playSpawnAnimation(ev.items, originX: ev.originX, originY: ev.originY);
+          }
+        });
         if (gameService.isLoading) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
@@ -403,6 +412,25 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                           children: [
                             for (int i = 0; i < _ghosts.length; i++)
                               LayoutId(id: i, child: _GhostEmoji(emoji: _ghosts[i].emoji, progress: t)),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              // Ghost overlay for spawn animation (reverse)
+              if (_spawnController != null && _spawnOrigin != null)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _spawnController!,
+                      builder: (context, _) {
+                        final t = Curves.easeOutBack.transform(_spawnController!.value);
+                        return CustomMultiChildLayout(
+                          delegate: _SpawnLayoutDelegate(_spawnGhosts, _spawnOrigin!, t),
+                          children: [
+                            for (int i = 0; i < _spawnGhosts.length; i++)
+                              LayoutId(id: i, child: _SpawnEmoji(emoji: _spawnGhosts[i].emoji, progress: t)),
                           ],
                         );
                       },
@@ -603,6 +631,16 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
     final canPowerMerge = _highlightedItems.length == 2 && _areTwoSameTier(gameService) && gameService.powerMergeCharges > 0;
     final canMergeNow = _highlightedItems.length >= 3 || canPowerMerge;
     final isBoardFull = gameService.gridItems.length >= GameService.gridSize * GameService.gridSize;
+    final coins = gameService.playerStats.coins;
+    final hasSelection = _selectedItem != null;
+    final canAffordSummon = coins >= 80;
+    final canAffordDuplicate = coins >= 120;
+    final canAffordClear = coins >= 100;
+    final canAffordShuffle = coins >= 150;
+    final canAffordPowerMerge = coins >= 200;
+    final canBomb = gameService.playerStats.bombRunes > 0 && hasSelection;
+    final canWildcard = gameService.playerStats.wildcardOrbs > 0;
+    final canTierUp = gameService.playerStats.tierUpTokens > 0 && hasSelection && !_selectedItem!.isWildcard && _selectedItem!.tier < GameService.totalTiers;
     return Container(
       padding: AppSpacing.paddingMd,
       decoration: BoxDecoration(
@@ -627,7 +665,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   label: 'Summon x4',
                   cost: 80,
                   color: Theme.of(context).colorScheme.tertiary,
-                  onPressed: isBoardFull
+                  onPressed: (isBoardFull || !canAffordSummon)
                       ? null
                       : () async {
                           final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
@@ -645,46 +683,44 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   label: 'Duplicate',
                   cost: 120,
                   color: Theme.of(context).colorScheme.primary,
-                  onPressed: () async {
-                    if (_selectedItem == null) {
-                      _showMessage('Select an item to duplicate');
-                      return;
-                    }
-                    final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
-                    if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); }
-                    else _showMessage('Action failed or not enough coins');
-                  },
+                  onPressed: (hasSelection && canAffordDuplicate)
+                      ? () async {
+                          final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
+                          if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); }
+                          else _showMessage('Action failed or not enough coins');
+                        }
+                      : null,
                 ),
                 _AbilityButton(
                   icon: Icons.cleaning_services,
                   label: 'Clear',
                   cost: 100,
                   color: Theme.of(context).colorScheme.error,
-                  onPressed: () async {
-                    if (_selectedItem == null) {
-                      _showMessage('Select an item to clear');
-                      return;
-                    }
-                    final ok = await gameService.abilityClearItem(_selectedItem!.id, cost: 100);
-                    if (ok) {
-                      setState(() { _selectedItem = null; _highlightedItems.clear(); });
-                      context.read<HapticsService>().onAbilityClear();
-                      _showMessage('Cleared item 🧹');
-                    } else {
-                      _showMessage('Action failed or not enough coins');
-                    }
-                  },
+                  onPressed: (hasSelection && canAffordClear)
+                      ? () async {
+                          final ok = await gameService.abilityClearItem(_selectedItem!.id, cost: 100);
+                          if (ok) {
+                            setState(() { _selectedItem = null; _highlightedItems.clear(); });
+                            context.read<HapticsService>().onAbilityClear();
+                            _showMessage('Cleared item 🧹');
+                          } else {
+                            _showMessage('Action failed or not enough coins');
+                          }
+                        }
+                      : null,
                 ),
                 _AbilityButton(
                   icon: Icons.shuffle,
                   label: 'Shuffle',
                   cost: 150,
                   color: Theme.of(context).colorScheme.secondary,
-                  onPressed: () async {
-                    final ok = await gameService.abilityShuffleBoard(cost: 150);
-                    if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); }
-                    else _showMessage('Not enough coins');
-                  },
+                  onPressed: canAffordShuffle
+                      ? () async {
+                          final ok = await gameService.abilityShuffleBoard(cost: 150);
+                          if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); }
+                          else _showMessage('Not enough coins');
+                        }
+                      : null,
                 ),
                 _AbilityButton(
                   icon: Icons.flash_on,
@@ -692,11 +728,13 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   cost: 200,
                   trailing: gameService.powerMergeCharges > 0 ? 'x${gameService.powerMergeCharges}' : null,
                   color: Theme.of(context).colorScheme.primaryContainer,
-                  onPressed: () async {
-                    final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
-                    if (ok) { context.read<HapticsService>().onPowerMergePurchased(); _showMessage('Power Merge ready ⚡'); }
-                    else _showMessage('Not enough coins');
-                  },
+                  onPressed: canAffordPowerMerge
+                      ? () async {
+                          final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
+                          if (ok) { context.read<HapticsService>().onPowerMergePurchased(); _showMessage('Power Merge ready ⚡'); }
+                          else _showMessage('Not enough coins');
+                        }
+                      : null,
                 ),
                 _AbilityButton(
                   icon: Icons.auto_awesome,
@@ -704,16 +742,16 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   cost: 0,
                   trailing: gameService.playerStats.wildcardOrbs > 0 ? 'x${gameService.playerStats.wildcardOrbs}' : null,
                   color: Theme.of(context).colorScheme.primary,
-                  onPressed: gameService.playerStats.wildcardOrbs <= 0
-                      ? null
-                      : () async {
+                  onPressed: canWildcard
+                      ? () async {
                           setState(() => _placingWildcard = !_placingWildcard);
                           if (_placingWildcard) {
                             _showCenterPopup('Tap an empty slot to place 🃏', icon: Icons.touch_app);
                           } else {
                             _showMessage('Wildcard placement cancelled');
                           }
-                        },
+                        }
+                      : null,
                 ),
                 _AbilityButton(
                   icon: Icons.local_fire_department,
@@ -721,9 +759,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   cost: 0,
                   trailing: gameService.playerStats.bombRunes > 0 ? 'x${gameService.playerStats.bombRunes}' : null,
                   color: Theme.of(context).colorScheme.error,
-                  onPressed: (gameService.playerStats.bombRunes <= 0 || _selectedItem == null)
-                      ? null
-                      : () async {
+                  onPressed: canBomb
+                      ? () async {
                           final ok = await gameService.abilityBombArea(_selectedItem!.id);
                           if (ok) {
                             setState(() { _selectedItem = null; _highlightedItems.clear(); });
@@ -732,7 +769,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                           } else {
                             _showMessage('No Bomb Rune or no target');
                           }
-                        },
+                        }
+                      : null,
                 ),
                 _AbilityButton(
                   icon: Icons.upgrade,
@@ -740,15 +778,13 @@ class _GameBoardScreenState extends State<GameBoardScreen> with SingleTickerProv
                   cost: 0,
                   trailing: gameService.playerStats.tierUpTokens > 0 ? 'x${gameService.playerStats.tierUpTokens}' : null,
                   color: Theme.of(context).colorScheme.tertiary,
-                  onPressed: () async {
-                    if (gameService.playerStats.tierUpTokens <= 0) { _showMessage('No Ascension Shards'); return; }
-                    if (_selectedItem == null) { _showMessage('Select an item to upgrade'); return; }
-                    if (_selectedItem!.isWildcard) { _showMessage('Cannot upgrade a Wildcard'); return; }
-                    if (_selectedItem!.tier >= GameService.totalTiers) { _showMessage('Already at max tier'); return; }
-                    final ok = await gameService.abilityTierUp(_selectedItem!.id);
-                    if (ok) { context.read<HapticsService>().successSoft(); _showMessage('Tier increased ⤴️'); }
-                    else { _showMessage('Upgrade failed'); }
-                  },
+                  onPressed: canTierUp
+                      ? () async {
+                          final ok = await gameService.abilityTierUp(_selectedItem!.id);
+                          if (ok) { context.read<HapticsService>().successSoft(); _showMessage('Tier increased ⤴️'); }
+                          else { _showMessage('Upgrade failed'); }
+                        }
+                      : null,
                 ),
               ].map((w) => Padding(padding: const EdgeInsets.only(right: 12), child: w)).toList(),
             ),
@@ -905,7 +941,7 @@ extension on _GameBoardScreenState {
       _mergeController?.dispose();
       _mergeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 550));
 
-      setState(() {});
+      _refresh();
 
       await _mergeController!.forward();
     } catch (e) {
@@ -916,7 +952,122 @@ extension on _GameBoardScreenState {
       _mergeController = null;
       _ghosts = [];
       _animatingIds.clear();
-      setState(() {});
+      _refresh();
+    }
+  }
+}
+
+// ===================== Spawn Animation Helpers (reverse of merge) =====================
+class _SpawnGhost {
+  _SpawnGhost({required this.emoji, required this.target});
+  final String emoji;
+  final Offset target; // global
+}
+
+class _SpawnEmoji extends StatelessWidget {
+  const _SpawnEmoji({required this.emoji, required this.progress});
+  final String emoji;
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    // Slight scale up as it moves outward
+    final scale = 0.9 + (progress * 0.2);
+    final opacity = (progress * 1.0).clamp(0.0, 1.0);
+    final glowColor = Theme.of(context).colorScheme.primary;
+    return Opacity(
+      opacity: opacity,
+      child: Transform.scale(
+        scale: scale.clamp(0.9, 1.1),
+        child: Text(
+          emoji,
+          style: TextStyle(
+            fontSize: 32,
+            shadows: [
+              Shadow(color: glowColor.withValues(alpha: 0.6), blurRadius: 10),
+              Shadow(color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.4), blurRadius: 14),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SpawnLayoutDelegate extends MultiChildLayoutDelegate {
+  _SpawnLayoutDelegate(this.ghosts, this.origin, this.t);
+  final List<_SpawnGhost> ghosts;
+  final Offset origin;
+  final double t; // 0..1
+
+  @override
+  void performLayout(Size size) {
+    for (int i = 0; i < ghosts.length; i++) {
+      if (!hasChild(i)) continue;
+      final boxSize = layoutChild(i, const BoxConstraints.tightFor(width: 28, height: 28));
+      final g = ghosts[i];
+      // Slight arc outwards similar to merge but reversed
+      final dir = (g.target - origin);
+      final len = dir.distance == 0 ? 1.0 : dir.distance;
+      final norm = Offset(dir.dx / len, dir.dy / len);
+      final perp = Offset(-norm.dy, norm.dx);
+      final arc = perp * (1 - t) * 18.0; // diminishing side arc
+      final pos = Offset.lerp(origin, g.target, t)! + arc;
+      positionChild(i, Offset(pos.dx - boxSize.width / 2, pos.dy - boxSize.height / 2));
+    }
+  }
+
+  @override
+  bool shouldRelayout(covariant _SpawnLayoutDelegate oldDelegate) => oldDelegate.t != t || oldDelegate.ghosts != ghosts || oldDelegate.origin != origin;
+}
+
+extension on _GameBoardScreenState {
+  Future<void> _playSpawnAnimation(List<GameItem> items, {required int originX, required int originY}) async {
+    try {
+      if (_spawnController?.isAnimating == true) return;
+      if (_gridKey.currentContext == null) return;
+      final box = _gridKey.currentContext!.findRenderObject() as RenderBox?;
+      if (box == null) return;
+      final gridTopLeft = box.localToGlobal(Offset.zero);
+      final gridW = box.size.width;
+      final gridH = box.size.height;
+      const padding = AppSpacing.sm;
+      const spacing = 4.0;
+      final innerW = gridW - padding * 2;
+      final innerH = gridH - padding * 2;
+      final cellW = (innerW - spacing * (GameService.gridSize - 1)) / GameService.gridSize;
+      final cellH = (innerH - spacing * (GameService.gridSize - 1)) / GameService.gridSize;
+
+      Offset cellCenter(int x, int y) => gridTopLeft + Offset(padding + x * (cellW + spacing) + cellW / 2, padding + y * (cellH + spacing) + cellH / 2);
+
+      // Setup ghosts
+      final origin = cellCenter(originX, originY);
+      _spawnOrigin = origin;
+      _spawnGhosts = items
+          .where((e) => e.gridX != null && e.gridY != null)
+          .map((e) => _SpawnGhost(emoji: e.emoji, target: cellCenter(e.gridX!, e.gridY!)))
+          .toList();
+
+      // Hide real items during animation to avoid double rendering
+      _animatingIds
+        ..clear()
+        ..addAll(items.map((e) => e.id));
+
+      _spawnController?.dispose();
+      _spawnController = AnimationController(vsync: this, duration: const Duration(milliseconds: 520));
+
+      _refresh();
+
+      await _spawnController!.forward();
+    } catch (e) {
+      debugPrint('Spawn animation failed: $e');
+    } finally {
+      _spawnController?.dispose();
+      _spawnController = null;
+      _spawnGhosts = [];
+      _spawnOrigin = null;
+      _animatingIds.clear();
+      _refresh();
     }
   }
 }
@@ -940,12 +1091,19 @@ class _AbilityButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final onColor = _bestOnColor(context, color);
+    final bool isDisabled = onPressed == null;
+    final cs = Theme.of(context).colorScheme;
+    final activeFg = _bestOnColor(context, color);
+    final disabledBg = cs.surfaceContainerHighest;
+    final disabledFg = cs.onSurfaceVariant;
+    final fg = isDisabled ? disabledFg : activeFg;
     return ElevatedButton(
       onPressed: onPressed,
       style: ElevatedButton.styleFrom(
         backgroundColor: color,
-        foregroundColor: onColor,
+        foregroundColor: activeFg,
+        disabledBackgroundColor: disabledBg,
+        disabledForegroundColor: disabledFg,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         minimumSize: const Size(0, 36),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -956,31 +1114,33 @@ class _AbilityButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: onColor, size: 18),
+          Icon(icon, color: fg, size: 18),
           const SizedBox(width: 6),
-          Text(label, style: context.textStyles.labelMedium?.bold.withColor(onColor)),
-          const SizedBox(width: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-            decoration: BoxDecoration(
-              color: onColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(999),
+          Text(label, style: context.textStyles.labelMedium?.bold.withColor(fg)),
+          if (cost > 0) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              decoration: BoxDecoration(
+                color: fg.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(children: [
+                const Text('🪙', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 3),
+                Text('$cost', style: context.textStyles.labelSmall?.bold.withColor(fg)),
+              ]),
             ),
-            child: Row(children: [
-              const Text('🪙', style: TextStyle(fontSize: 12)),
-              const SizedBox(width: 3),
-              Text('$cost', style: context.textStyles.labelSmall?.bold.withColor(onColor)),
-            ]),
-          ),
+          ],
           if (trailing != null) ...[
             const SizedBox(width: 6),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: onColor.withValues(alpha: 0.15),
+                color: fg.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(6),
               ),
-              child: Text(trailing!, style: context.textStyles.labelSmall?.bold.withColor(onColor)),
+              child: Text(trailing!, style: context.textStyles.labelSmall?.bold.withColor(fg)),
             ),
           ],
         ],

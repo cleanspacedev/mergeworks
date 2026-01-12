@@ -23,6 +23,34 @@ class GameService extends ChangeNotifier {
   List<GameItem> get gridItems => _gridItems;
   bool get isLoading => _isLoading;
   int get powerMergeCharges => _powerMergeCharges;
+
+  // Ephemeral UI event: recently spawned items with an origin for animations
+  SpawnEvent? _lastSpawnEvent;
+  SpawnEvent? get lastSpawnEvent => _lastSpawnEvent;
+  SpawnEvent? takeLastSpawnEvent() {
+    final ev = _lastSpawnEvent;
+    _lastSpawnEvent = null;
+    return ev;
+  }
+  void _recordSpawnEvent(List<GameItem> items, {int? originX, int? originY}) {
+    if (items.isEmpty) return;
+    final ox = originX ?? (gridSize ~/ 2);
+    final oy = originY ?? (gridSize ~/ 2);
+    _lastSpawnEvent = SpawnEvent(items: List<GameItem>.from(items), originX: ox, originY: oy);
+  }
+  
+  // Permanent collection progress: store discovered tiers as 'tier_<n>' keys in playerStats.discoveredItems
+  Set<int> get _discoveredTiers {
+    final set = <int>{};
+    for (final s in _playerStats.discoveredItems) {
+      if (s.startsWith('tier_')) {
+        final p = int.tryParse(s.split('_').last);
+        if (p != null) set.add(p);
+      }
+    }
+    return set;
+  }
+  int get discoveredTierCount => _discoveredTiers.length;
   
   void setFirebaseService(FirebaseService service) {
     _firebaseService = service;
@@ -56,7 +84,12 @@ class GameService extends ChangeNotifier {
     final extraLevels = (beyond / 10).ceil();
     return _levelTierCounts.length + extraLevels;
   }
-  int get currentLevel => _levelForTier((_playerStats.highestTier <= 0 ? 1 : _playerStats.highestTier));
+  // Link levels to collection progress: your level is determined by how many unique tiers
+  // you have discovered in the collection book (not just the highest on-board tier)
+  int get currentLevel {
+    final count = discoveredTierCount <= 0 ? 1 : discoveredTierCount;
+    return _levelForTier(count);
+  }
 
   static Map<int, Map<String, dynamic>> _buildTemplates() {
     final Map<int, Map<String, dynamic>> base = {};
@@ -181,6 +214,22 @@ class GameService extends ChangeNotifier {
         _injectMergeOpportunity();
       }
 
+      // Ensure collection discoveries persist: mark any tiers currently present as discovered
+      final presentTiers = _gridItems.map((i) => i.tier).toSet();
+      final discovered = Set<String>.from(_playerStats.discoveredItems);
+      bool discoveredChanged = false;
+      for (final t in presentTiers) {
+        final key = 'tier_$t';
+        if (!discovered.contains(key)) {
+          discovered.add(key);
+          discoveredChanged = true;
+        }
+      }
+      if (discoveredChanged) {
+        _playerStats = _playerStats.copyWith(discoveredItems: discovered.toList(), updatedAt: DateTime.now());
+        await _savePlayerStats();
+      }
+
       // Ensure the board feels lively: keep a minimum population that scales with level
       _ensureTargetPopulation();
 
@@ -220,7 +269,7 @@ class GameService extends ChangeNotifier {
     }
   }
 
-  void _fillRandomLowTiers({required int count, int maxTier = 2}) {
+  List<GameItem> _fillRandomLowTiers({required int count, int maxTier = 2}) {
     final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
     int added = 0;
     // Try to place near top-left scanning order but choose slots randomly for variety
@@ -231,12 +280,16 @@ class GameService extends ChangeNotifier {
       }
     }
     allSlots.shuffle(_rand);
+    final List<GameItem> created = [];
     for (final slot in allSlots) {
       if (added >= count) break;
       final tier = (_rand.nextDouble() < 0.8) ? 1 : min(2, maxTier); // bias toward tier-1
-      _gridItems.add(_createItem(tier, slot['x']!, slot['y']!));
+      final item = _createItem(tier, slot['x']!, slot['y']!);
+      _gridItems.add(item);
+      created.add(item);
       added++;
     }
+    return created;
   }
 
   // After a successful merge, sometimes spawn extra low-tier items near the merge location
@@ -266,17 +319,26 @@ class GameService extends ChangeNotifier {
       final local = nearbyEmpties(centerX, centerY);
       local.shuffle(_rand);
       int placed = 0;
+      final List<GameItem> spawned = [];
 
       for (final slot in local) {
         if (placed >= toAdd) break;
         final tier = _rand.nextDouble() < 0.85 ? 1 : 2;
-        _gridItems.add(_createItem(tier, slot['x']!, slot['y']!));
+        final it = _createItem(tier, slot['x']!, slot['y']!);
+        _gridItems.add(it);
+        spawned.add(it);
         placed++;
       }
 
       if (placed < toAdd) {
         // Fallback: fill anywhere
-        _fillRandomLowTiers(count: toAdd - placed, maxTier: 2);
+        final extra = _fillRandomLowTiers(count: toAdd - placed, maxTier: 2);
+        spawned.addAll(extra);
+      }
+
+      if (spawned.isNotEmpty) {
+        // Let UI animate these new items from the merge center
+        _recordSpawnEvent(spawned, originX: centerX, originY: centerY);
       }
     }
 
@@ -466,10 +528,10 @@ class GameService extends ChangeNotifier {
     final newItem = _createItem(newTier, centerX, centerY);
     _gridItems.add(newItem);
 
+    // Permanently record discovery of this tier in the collection
     final discovered = List<String>.from(_playerStats.discoveredItems);
-    if (!discovered.contains(newItem.id)) {
-      discovered.add(newItem.id);
-    }
+    final discoveredKey = 'tier_$newTier';
+    if (!discovered.contains(discoveredKey)) discovered.add(discoveredKey);
 
     _playerStats = _playerStats.copyWith(
       totalMerges: _playerStats.totalMerges + 1,
@@ -517,6 +579,7 @@ class GameService extends ChangeNotifier {
 
     await _saveState();
     notifyListeners();
+    _recordSpawnEvent([newItem]);
     return true;
   }
 
@@ -632,6 +695,11 @@ class GameService extends ChangeNotifier {
       await _saveState();
       notifyListeners();
       debugPrint('Duplicated item ${item.id} at ${emptyNeighbor['x']},${emptyNeighbor['y']}');
+      if (item.gridX != null && item.gridY != null) {
+        _recordSpawnEvent([dup], originX: item.gridX, originY: item.gridY);
+      } else {
+        _recordSpawnEvent([dup]);
+      }
       return true;
     } catch (e) {
       debugPrint('Duplicate ability failed: $e');
@@ -739,10 +807,11 @@ class GameService extends ChangeNotifier {
 
     if (!_spendCoinsIfPossible(cost)) return false;
     try {
-      _fillRandomLowTiers(count: count, maxTier: 2);
+      final created = _fillRandomLowTiers(count: count, maxTier: 2);
       await _saveState();
       notifyListeners();
       debugPrint('Summoned $count low-tier items.');
+      _recordSpawnEvent(created);
       return true;
     } catch (e) {
       debugPrint('Summon ability failed: $e');
@@ -837,11 +906,12 @@ class GameService extends ChangeNotifier {
   }
 
   List<GameItem> getAllDiscoveredItems() {
-    final discovered = <int, GameItem>{};
+    final discoveredMap = <int, GameItem>{};
+    final discoveredTiers = _discoveredTiers;
     for (int tier = 1; tier <= _itemTemplates.length; tier++) {
       final template = _itemTemplates[tier]!;
-      final isDiscovered = _gridItems.any((item) => item.tier == tier) || tier <= 3;
-      discovered[tier] = GameItem(
+      final isDiscovered = discoveredTiers.contains(tier) || tier <= 3;
+      discoveredMap[tier] = GameItem(
         id: 'template_$tier',
         name: template['name'],
         tier: tier,
@@ -850,7 +920,7 @@ class GameService extends ChangeNotifier {
         isDiscovered: isDiscovered,
       );
     }
-    return discovered.values.toList();
+    return discoveredMap.values.toList();
   }
 
   // ===================== Specials & Ads =====================
@@ -895,6 +965,15 @@ class GameService extends ChangeNotifier {
     }
   }
 
+  // ===================== Spins =====================
+  // Spend gems for an extra daily spin. No side effects other than currency change.
+  Future<bool> purchaseExtraDailySpin({int gemCost = 30}) async {
+    if (!_spendGemsIfPossible(gemCost)) return false;
+    await _savePlayerStats();
+    notifyListeners();
+    return true;
+  }
+
   Future<void> markAdsRemoved() async {
     _playerStats = _playerStats.copyWith(adRemovalPurchased: true, updatedAt: DateTime.now());
     await _savePlayerStats();
@@ -926,6 +1005,7 @@ class GameService extends ChangeNotifier {
     _playerStats = _playerStats.copyWith(wildcardOrbs: (_playerStats.wildcardOrbs - 1).clamp(0, 9999), updatedAt: DateTime.now());
     await _saveState();
     notifyListeners();
+    _recordSpawnEvent([wildcard]);
     return true;
   }
 
@@ -957,6 +1037,7 @@ class GameService extends ChangeNotifier {
     _playerStats = _playerStats.copyWith(wildcardOrbs: (_playerStats.wildcardOrbs - 1).clamp(0, 9999), updatedAt: DateTime.now());
     await _saveState();
     notifyListeners();
+    _recordSpawnEvent([wildcard]);
     return true;
   }
 
@@ -978,4 +1059,12 @@ class GameService extends ChangeNotifier {
     }
     return _findEmptyGridSlot();
   }
+}
+
+// Lightweight spawn event description for UI animations
+class SpawnEvent {
+  final List<GameItem> items;
+  final int originX;
+  final int originY;
+  const SpawnEvent({required this.items, required this.originX, required this.originY});
 }

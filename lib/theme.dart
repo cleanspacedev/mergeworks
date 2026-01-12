@@ -207,7 +207,7 @@ ThemeData get lightTheme => ThemeData(
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
       side: BorderSide(
-        color: LightModeColors.lightOutline.withOpacity(0.2),
+        color: LightModeColors.lightOutline.withValues(alpha: 0.2),
         width: 1,
       ),
     ),
@@ -252,7 +252,7 @@ ThemeData get darkTheme => ThemeData(
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(12),
       side: BorderSide(
-        color: DarkModeColors.darkOutline.withOpacity(0.2),
+        color: DarkModeColors.darkOutline.withValues(alpha: 0.2),
         width: 1,
       ),
     ),
@@ -355,10 +355,10 @@ class AppLevelTheme {
     // Blend slightly with surface for consistency
     final surface = Theme.of(context).colorScheme.surface;
     Color blend(Color a, Color b, double t) => Color.fromARGB(
-      (a.alpha * (1 - t) + b.alpha * t).round(),
-      (a.red * (1 - t) + b.red * t).round(),
-      (a.green * (1 - t) + b.green * t).round(),
-      (a.blue * (1 - t) + b.blue * t).round(),
+      (((a.a * (1 - t) + b.a * t) * 255.0).round()) & 0xff,
+      (((a.r * (1 - t) + b.r * t) * 255.0).round()) & 0xff,
+      (((a.g * (1 - t) + b.g * t) * 255.0).round()) & 0xff,
+      (((a.b * (1 - t) + b.b * t) * 255.0).round()) & 0xff,
     );
     return [
       blend(top, surface, isDark ? 0.35 : 0.15),

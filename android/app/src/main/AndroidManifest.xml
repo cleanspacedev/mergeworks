@@ -3,6 +3,10 @@
         android:label="MergeWorks"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- AdMob App ID (test ID by default). Replace with your real AdMob App ID before release. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

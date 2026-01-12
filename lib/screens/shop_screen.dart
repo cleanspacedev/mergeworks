@@ -8,6 +8,7 @@ import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/haptics_service.dart';
 import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/widgets/particle_field.dart';
+import 'package:mergeworks/widgets/ads_banner.dart';
 
 class ShopScreen extends StatelessWidget {
   const ShopScreen({super.key});
@@ -23,6 +24,7 @@ class ShopScreen extends StatelessWidget {
           onPressed: () => context.pop(),
         ),
       ),
+      bottomNavigationBar: const AdsBanner(),
       body: Consumer2<ShopService, GameService>(
         builder: (context, shopService, gameService, child) {
           final energyItems = shopService.items.where((item) => item.type == ShopItemType.energy).toList();
@@ -93,11 +95,20 @@ class ShopScreen extends StatelessWidget {
         ...items.map((item) {
           final isSpecial = item.type == ShopItemType.special;
           final isLocked = isSpecial && item.requiredLevel > gameService.currentLevel;
+          final isAdRemoval = item.type == ShopItemType.adRemoval;
+          final alreadyOwned = isAdRemoval && gameService.playerStats.adRemovalPurchased;
+          final canAffordGems = isSpecial ? ((item.gemCost ?? 0) <= gameService.playerStats.gems) : true;
+          final disabled = isLocked || alreadyOwned || !canAffordGems;
+          final priceLabel = isSpecial
+              ? null
+              : (shopService.priceLabelFor(item.id) ?? '\$${item.price.toStringAsFixed(2)}');
           return _ShopItemCard(
             item: item,
             isLocked: isLocked,
             lockLabel: isLocked ? 'Reach Level ${item.requiredLevel}' : null,
-            onPurchase: isLocked ? null : () => _handlePurchase(context, item, shopService, gameService),
+            disabled: disabled,
+            priceLabel: priceLabel,
+            onPurchase: disabled ? null : () => _handlePurchase(context, item, shopService, gameService),
           );
         }),
       ],
@@ -167,7 +178,6 @@ class ShopScreen extends StatelessWidget {
       transitionDuration: const Duration(milliseconds: 260),
       pageBuilder: (_, __, ___) => const SizedBox.shrink(),
       transitionBuilder: (context, anim, _, __) {
-        final scale = Tween<double>(begin: 0.92, end: 1.0).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutBack));
         final opacity = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut));
         return Opacity(
           opacity: opacity.value,
@@ -185,123 +195,135 @@ class _ShopItemCard extends StatelessWidget {
   final VoidCallback? onPurchase;
   final bool isLocked;
   final String? lockLabel;
+  final bool disabled;
+  final String? priceLabel; // localized price label for real-money items
 
   const _ShopItemCard({
     required this.item,
     required this.onPurchase,
     this.isLocked = false,
     this.lockLabel,
+    this.disabled = false,
+    this.priceLabel,
   });
 
   @override
   Widget build(BuildContext context) {
     final isSpecial = item.type == ShopItemType.special;
-    return Card(
-      margin: const EdgeInsets.only(bottom: AppSpacing.md),
-      child: InkWell(
-        onTap: onPurchase,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        child: Padding(
-          padding: AppSpacing.paddingMd,
-          child: Row(
-            children: [
-              Container(
-                width: 60,
-                height: 60,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Theme.of(context).colorScheme.primaryContainer,
-                      Theme.of(context).colorScheme.secondaryContainer,
+    final cs = Theme.of(context).colorScheme;
+    final priceBg = isSpecial ? cs.secondary : cs.primary;
+    final priceFg = isSpecial ? cs.onSecondary : cs.onPrimary;
+    final priceBgDisabled = cs.surfaceContainerHighest;
+    final priceFgDisabled = cs.onSurfaceVariant;
+    return Opacity(
+      opacity: disabled ? 0.55 : 1.0,
+      child: Card(
+        margin: const EdgeInsets.only(bottom: AppSpacing.md),
+        child: InkWell(
+          onTap: onPurchase,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: Padding(
+            padding: AppSpacing.paddingMd,
+            child: Row(
+              children: [
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Theme.of(context).colorScheme.primaryContainer,
+                        Theme.of(context).colorScheme.secondaryContainer,
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                  child: Center(
+                    child: Text(
+                      item.icon,
+                      style: const TextStyle(fontSize: 32),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.name,
+                        style: context.textStyles.titleMedium?.bold.copyWith(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        item.description,
+                        style: context.textStyles.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ],
                   ),
-                  borderRadius: BorderRadius.circular(AppRadius.md),
                 ),
-                child: Center(
-                  child: Text(
-                    item.icon,
-                    style: const TextStyle(fontSize: 32),
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(width: AppSpacing.md),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      item.name,
-                      style: context.textStyles.titleMedium?.bold.copyWith(
-                        color: Theme.of(context).colorScheme.onSurface,
+                    if (isLocked)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.lock, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                            const SizedBox(width: 6),
+                            Text(
+                              lockLabel ?? 'Locked',
+                              style: context.textStyles.labelSmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      item.description,
-                      style: context.textStyles.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    if (isLocked) const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                      decoration: BoxDecoration(
+                        color: disabled ? priceBgDisabled : priceBg,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
                       ),
+                      child: isSpecial
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text('💎', style: TextStyle(fontSize: 16)),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${item.gemCost ?? 0}',
+                                  style: context.textStyles.titleMedium?.bold.copyWith(
+                                    color: disabled ? priceFgDisabled : priceFg,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Text(
+                              priceLabel ?? '\$${item.price.toStringAsFixed(2)}',
+                              style: context.textStyles.titleMedium?.bold.copyWith(
+                                color: disabled ? priceFgDisabled : priceFg,
+                              ),
+                            ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(width: AppSpacing.md),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (isLocked)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.lock, size: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          const SizedBox(width: 6),
-                          Text(
-                            lockLabel ?? 'Locked',
-                            style: context.textStyles.labelSmall?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (isLocked) const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      color: isSpecial ? Theme.of(context).colorScheme.secondary : Theme.of(context).colorScheme.primary,
-                      borderRadius: BorderRadius.circular(AppRadius.lg),
-                    ),
-                    child: isSpecial
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('💎', style: TextStyle(fontSize: 16)),
-                              const SizedBox(width: 6),
-                              Text(
-                                '${item.gemCost ?? 0}',
-                                style: context.textStyles.titleMedium?.bold.copyWith(
-                                  color: Theme.of(context).colorScheme.onSecondary,
-                                ),
-                              ),
-                            ],
-                          )
-                        : Text(
-                            '\$${item.price.toStringAsFixed(2)}',
-                            style: context.textStyles.titleMedium?.bold.copyWith(
-                              color: Theme.of(context).colorScheme.onPrimary,
-                            ),
-                          ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

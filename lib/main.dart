@@ -8,6 +8,7 @@ import 'package:mergeworks/services/shop_service.dart';
 import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/services/firebase_service.dart';
 import 'package:mergeworks/services/haptics_service.dart';
+import 'package:mergeworks/services/ads_service.dart';
 import 'firebase_options.dart';
 import 'theme.dart';
 import 'nav.dart';
@@ -21,6 +22,8 @@ void main() async {
   } catch (e) {
     debugPrint('Firebase initialization error: $e');
   }
+  // Initialize AdMob (Android only; no-op elsewhere)
+  await AdsService.instance.initialize();
   
   runApp(const MyApp());
 }
@@ -54,9 +57,10 @@ class MyApp extends StatelessWidget {
             return questService;
           },
         ),
-        ChangeNotifierProvider(create: (_) => ShopService()),
+        ChangeNotifierProvider(create: (_) => ShopService()..initialize()),
         ChangeNotifierProvider(create: (_) => AudioService()..initialize()),
         Provider(create: (_) => HapticsService()),
+        Provider.value(value: AdsService.instance),
       ],
       child: MaterialApp.router(
         title: 'MergeWorks',

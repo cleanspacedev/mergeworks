@@ -1,7 +1,92 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:mergeworks/models/shop_item.dart';
 
 class ShopService extends ChangeNotifier {
+  // ===== Store product mapping (internal -> store productId) =====
+  // iOS/Android share the same product IDs you created in the stores.
+  static const Map<String, String> _storeIds = {
+    // Energy
+    'energy_100': 'consumable.energy.100',
+    'energy_500': 'consumable.energy.500',
+    // Gems
+    'gems_100': 'consumable.gems.100',
+    'gems_500': 'consumable.gems.500',
+    'gems_1200': 'consumable.gems.1200',
+    // Non-consumable
+    'ad_removal': 'nonconsumable.remove_adsAll',
+  };
+
+  final InAppPurchase _iap = InAppPurchase.instance;
+  bool _iapAvailable = false;
+  bool get iapAvailable => _iapAvailable;
+  bool get isSimulated => kIsWeb || !_iapAvailable;
+  StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
+  final Map<String, ProductDetails> _productDetailsByItemId = {};
+
+  Future<void> initialize() async {
+    // In Dreamflow preview (web), native IAP is unavailable; we simulate.
+    if (kIsWeb) {
+      _iapAvailable = false;
+      notifyListeners();
+      return;
+    }
+    try {
+      _iapAvailable = await _iap.isAvailable();
+      if (_iapAvailable) {
+        await _loadProducts();
+        _purchaseSub ??= _iap.purchaseStream.listen(_onPurchaseUpdates, onError: (e) {
+          debugPrint('IAP purchase stream error: $e');
+        });
+      }
+    } catch (e) {
+      debugPrint('IAP initialize failed: $e');
+      _iapAvailable = false;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadProducts() async {
+    try {
+      final ids = _storeIds.values.toSet();
+      final response = await _iap.queryProductDetails(ids);
+      if (response.error != null) {
+        debugPrint('IAP query error: ${response.error}');
+      }
+      _productDetailsByItemId.clear();
+      final byId = {for (final p in response.productDetails) p.id: p};
+      for (final entry in _storeIds.entries) {
+        final pd = byId[entry.value];
+        if (pd != null) {
+          _productDetailsByItemId[entry.key] = pd;
+        }
+      }
+    } catch (e) {
+      debugPrint('IAP load products failed: $e');
+    }
+  }
+
+  String? priceLabelFor(String itemId) {
+    final pd = _productDetailsByItemId[itemId];
+    return pd?.price; // Localized price string like "$0.99" or "€0,99"
+  }
+
+  void _onPurchaseUpdates(List<PurchaseDetails> purchases) async {
+    for (final p in purchases) {
+      // Always complete pending purchases to unblock the queue
+      if (p.status == PurchaseStatus.purchased || p.status == PurchaseStatus.error || p.status == PurchaseStatus.canceled) {
+        if (p.pendingCompletePurchase) {
+          try {
+            await _iap.completePurchase(p);
+          } catch (e) {
+            debugPrint('Failed to complete purchase ${p.productID}: $e');
+          }
+        }
+      }
+    }
+  }
   final List<ShopItem> _items = [
     ShopItem(
       id: 'energy_100',
@@ -122,8 +207,84 @@ class ShopService extends ChangeNotifier {
   List<ShopItem> get items => _items;
 
   Future<bool> purchase(String itemId) async {
-    debugPrint('Simulating purchase for $itemId');
-    await Future.delayed(const Duration(seconds: 1));
-    return true;
+    // Simulate in web/when store is not available
+    if (isSimulated) {
+      debugPrint('Simulating purchase for $itemId');
+      await Future.delayed(const Duration(milliseconds: 800));
+      return true;
+    }
+
+    try {
+      final storeId = _storeIds[itemId];
+      if (storeId == null) {
+        debugPrint('No storeId mapping for $itemId');
+        return false;
+      }
+      var pd = _productDetailsByItemId[itemId];
+      if (pd == null) {
+        await _loadProducts();
+        pd = _productDetailsByItemId[itemId];
+        if (pd == null) {
+          debugPrint('ProductDetails not found for $itemId / $storeId');
+          return false;
+        }
+      }
+
+      final isConsumable = itemId != 'ad_removal';
+      final targetId = pd.id;
+      final completer = Completer<bool>();
+
+      late final StreamSubscription sub;
+      sub = _iap.purchaseStream.listen((purchases) async {
+        for (final p in purchases) {
+          if (p.productID != targetId) continue;
+          switch (p.status) {
+            case PurchaseStatus.pending:
+              break;
+            case PurchaseStatus.purchased:
+            case PurchaseStatus.restored:
+              try {
+                // On Android, consumables are auto-consumed when using buyConsumable with autoConsume=true
+                if (p.pendingCompletePurchase) {
+                  await _iap.completePurchase(p);
+                }
+              } catch (e) {
+                debugPrint('Complete purchase failed: $e');
+              }
+              if (!completer.isCompleted) completer.complete(true);
+              await sub.cancel();
+              break;
+            case PurchaseStatus.canceled:
+            case PurchaseStatus.error:
+              if (p.pendingCompletePurchase) {
+                try { await _iap.completePurchase(p); } catch (_) {}
+              }
+              if (!completer.isCompleted) completer.complete(false);
+              await sub.cancel();
+              break;
+          }
+        }
+      }, onError: (e) async {
+        debugPrint('Purchase stream error: $e');
+        if (!completer.isCompleted) completer.complete(false);
+        await sub.cancel();
+      });
+
+      final param = PurchaseParam(productDetails: pd);
+      final triggered = isConsumable
+          ? await _iap.buyConsumable(purchaseParam: param, autoConsume: true)
+          : await _iap.buyNonConsumable(purchaseParam: param);
+
+      if (!triggered) {
+        await sub.cancel();
+        return false;
+      }
+
+      final ok = await completer.future.timeout(const Duration(seconds: 60), onTimeout: () => false);
+      return ok;
+    } catch (e) {
+      debugPrint('purchase($itemId) failed: $e');
+      return false;
+    }
   }
 }

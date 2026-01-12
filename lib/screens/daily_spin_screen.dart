@@ -7,6 +7,7 @@ import 'package:mergeworks/services/storage_service.dart';
 import 'package:mergeworks/models/spin_reward.dart';
 import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/haptics_service.dart';
+import 'package:mergeworks/widgets/ads_banner.dart';
 
 class DailySpinScreen extends StatefulWidget {
   const DailySpinScreen({super.key});
@@ -20,7 +21,7 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
   late AnimationController _controller;
   bool _isSpinning = false;
   bool _canSpin = true;
-  SpinReward? _lastReward;
+  static const int _extraSpinGemCost = 30;
 
   final List<SpinReward> _rewards = [
     SpinReward(id: '1', name: '10 Gems', icon: '💎', type: RewardType.gems, amount: 10, probability: 0.3),
@@ -58,18 +59,19 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
     }
   }
 
-  Future<void> _spin() async {
-    if (!_canSpin || _isSpinning) return;
+  Future<void> _spin({bool paid = false}) async {
+    if ((!paid && !_canSpin) || _isSpinning) return;
 
     setState(() => _isSpinning = true);
 
     final reward = _selectReward();
-    _lastReward = reward;
 
     _controller.reset();
     await _controller.forward();
 
-    await _storage.saveLastSpinDate(DateTime.now());
+    if (!paid) {
+      await _storage.saveLastSpinDate(DateTime.now());
+    }
 
     if (mounted) {
       final gameService = context.read<GameService>();
@@ -90,11 +92,37 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
 
       setState(() {
         _isSpinning = false;
-        _canSpin = false;
+        if (!paid) _canSpin = false;
       });
 
       _showRewardDialog(reward);
     }
+  }
+
+  Future<void> _buyExtraSpin() async {
+    if (_isSpinning) return;
+    final game = context.read<GameService>();
+    final ok = await game.purchaseExtraDailySpin(gemCost: _extraSpinGemCost);
+    if (!ok) {
+      // Not enough gems -> suggest visiting Shop
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Not enough gems'),
+          content: const Text('Earn more from merges, Daily Spin, or buy Specials in the Shop.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
+            FilledButton(onPressed: () { Navigator.of(context).pop(); context.push('/shop'); }, child: const Text('Open Shop')),
+          ],
+        ),
+      );
+      return;
+    }
+    // Haptics cue for purchase, then spin immediately
+    await context.read<HapticsService>().successSoft();
+    if (!mounted) return;
+    await _spin(paid: true);
   }
 
   SpinReward _selectReward() {
@@ -157,6 +185,7 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
           onPressed: () => context.pop(),
         ),
       ),
+      bottomNavigationBar: const AdsBanner(),
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -244,7 +273,7 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
               const SizedBox(height: AppSpacing.xxl),
               if (_canSpin)
                 FilledButton.icon(
-                  onPressed: _isSpinning ? null : _spin,
+                  onPressed: _isSpinning ? null : () => _spin(),
                   icon: _isSpinning 
                       ? const SizedBox(
                           width: 22,
@@ -262,18 +291,40 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
                   ),
                 )
               else
-                Container(
-                  padding: AppSpacing.paddingMd,
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
-                  ),
-                  child: Text(
-                    '⏰ Next spin available in ${24 - DateTime.now().hour} hours',
-                    style: context.textStyles.titleSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                Column(
+                  children: [
+                    Container(
+                      padding: AppSpacing.paddingMd,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                      ),
+                      child: Text(
+                        '⏰ Next free spin in ${24 - DateTime.now().hour}h',
+                        style: context.textStyles.titleSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: AppSpacing.md),
+                    Consumer<GameService>(
+                      builder: (context, game, _) {
+                        final canAfford = game.playerStats.gems >= _extraSpinGemCost;
+                        return FilledButton.icon(
+                          onPressed: _isSpinning || !canAfford ? null : _buyExtraSpin,
+                          icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
+                          label: Text('Buy Extra Spin • 💎 $_extraSpinGemCost',
+                              style: context.textStyles.titleSmall?.bold.copyWith(color: Theme.of(context).colorScheme.onPrimary)),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: canAfford ? Theme.of(context).colorScheme.secondary : Theme.of(context).colorScheme.surfaceContainerHigh,
+                            foregroundColor: Theme.of(context).colorScheme.onSecondary,
+                            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 14),
+                            shape: const StadiumBorder(),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               const SizedBox(height: AppSpacing.xl),
               Text(
