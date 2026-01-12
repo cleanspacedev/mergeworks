@@ -81,6 +81,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
           // Ensure remaining selection stays as a single connected group
           _pruneSelectionToConnected(gameService);
         }
+        // Tap feedback
+        context.read<AudioService>().playClickSound();
         return;
       }
 
@@ -89,6 +91,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         _highlightedItems.add(item.id);
         _selectedItem = item; // anchor for abilities like duplicate/clear
         _invalidMergeAttempts = 0;
+        context.read<AudioService>().playClickSound();
         return;
       }
 
@@ -119,6 +122,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
           ..add(item.id);
         _selectedItem = item;
         _invalidMergeAttempts = 0;
+        context.read<AudioService>().playClickSound();
         return;
       }
 
@@ -132,6 +136,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       _highlightedItems.add(item.id);
       _selectedItem = item; // last tapped becomes primary for single-item abilities
       _invalidMergeAttempts = 0;
+      context.read<AudioService>().playClickSound();
     });
   }
 
@@ -212,6 +217,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
     // Play advanced merge animation before mutating state
     await _playMergeAnimation(itemsToMerge);
+    final prevLevel = gameService.currentLevel;
     final newItem = await gameService.mergeItems(itemsToMerge);
     if (newItem != null) {
       // Haptics first so it lands with the visual
@@ -229,6 +235,12 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         _particleKey.currentState?.burst(_targetCenter!, count: 42);
       }
       _showMessage('Merged into ${newItem.name}! 🎉');
+
+      // Level up ding
+      final currLevel = gameService.currentLevel;
+      if (currLevel > prevLevel) {
+        unawaited(audioService.playLevelUp());
+      }
 
       final completedAchievements = await achievementService.checkProgress(gameService.playerStats);
       for (final achievement in completedAchievements) {
@@ -608,6 +620,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                           if (mounted) {
                             setState(() => _placingWildcard = false);
                             context.read<HapticsService>().successSoft();
+                            context.read<AudioService>().playAbilityUseSound();
                             _showMessage('Placed a Wildcard 🃏');
                           }
                         } else {
@@ -671,6 +684,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                           final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
                           if (ok) {
                             context.read<HapticsService>().onSummon();
+                            context.read<AudioService>().playAbilityUseSound();
                             _showMessage('Summoned new items ✨');
                           } else {
                             // If it failed, likely coins were insufficient (board-full is pre-disabled)
@@ -686,7 +700,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   onPressed: (hasSelection && canAffordDuplicate)
                       ? () async {
                           final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
-                          if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); }
+                          if (ok) { context.read<HapticsService>().onAbilityDuplicate(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Duplicated item ➕'); }
                           else _showMessage('Action failed or not enough coins');
                         }
                       : null,
@@ -702,6 +716,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                           if (ok) {
                             setState(() { _selectedItem = null; _highlightedItems.clear(); });
                             context.read<HapticsService>().onAbilityClear();
+                            context.read<AudioService>().playAbilityUseSound();
                             _showMessage('Cleared item 🧹');
                           } else {
                             _showMessage('Action failed or not enough coins');
@@ -717,7 +732,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   onPressed: canAffordShuffle
                       ? () async {
                           final ok = await gameService.abilityShuffleBoard(cost: 150);
-                          if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); }
+                          if (ok) { context.read<HapticsService>().onAbilityShuffle(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Shuffled the board 🔀'); }
                           else _showMessage('Not enough coins');
                         }
                       : null,
@@ -731,7 +746,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   onPressed: canAffordPowerMerge
                       ? () async {
                           final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
-                          if (ok) { context.read<HapticsService>().onPowerMergePurchased(); _showMessage('Power Merge ready ⚡'); }
+                          if (ok) { context.read<HapticsService>().onPowerMergePurchased(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Power Merge ready ⚡'); }
                           else _showMessage('Not enough coins');
                         }
                       : null,
@@ -765,6 +780,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                           if (ok) {
                             setState(() { _selectedItem = null; _highlightedItems.clear(); });
                             context.read<HapticsService>().onAbilityClear();
+                            context.read<AudioService>().playBombSound();
                             _showMessage('Boom! Cleared area 💥');
                           } else {
                             _showMessage('No Bomb Rune or no target');
@@ -781,7 +797,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   onPressed: canTierUp
                       ? () async {
                           final ok = await gameService.abilityTierUp(_selectedItem!.id);
-                          if (ok) { context.read<HapticsService>().successSoft(); _showMessage('Tier increased ⤴️'); }
+                          if (ok) { context.read<HapticsService>().successSoft(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Tier increased ⤴️'); }
                           else { _showMessage('Upgrade failed'); }
                         }
                       : null,
