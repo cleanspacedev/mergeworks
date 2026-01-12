@@ -12,20 +12,28 @@ import 'package:mergeworks/services/ads_service.dart';
 import 'firebase_options.dart';
 import 'theme.dart';
 import 'nav.dart';
+import 'package:mergeworks/services/log_service.dart';
+import 'dart:async';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  try {
-    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-    debugPrint('Firebase initialized successfully');
-  } catch (e) {
-    debugPrint('Firebase initialization error: $e');
-  }
-  // Initialize AdMob (Android only; no-op elsewhere)
-  await AdsService.instance.initialize();
-  
-  runApp(const MyApp());
+  // Capture console outputs and framework errors into LogService
+  await runZonedGuarded(() async {
+    LogService.hookGlobalLogging();
+    try {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+      debugPrint('Firebase initialized successfully');
+    } catch (e) {
+      debugPrint('Firebase initialization error: $e');
+    }
+    // Initialize AdMob (Android only; no-op elsewhere)
+    await AdsService.instance.initialize();
+    runApp(const MyApp());
+  }, (error, stack) {
+    // Ensure uncaught errors are still logged
+    LogService.instance.add('Uncaught error: $error');
+    if (stack != null) LogService.instance.add(stack.toString());
+  }, zoneSpecification: LogService.zoneSpecForPrintCapture());
 }
 
 class MyApp extends StatelessWidget {
@@ -35,6 +43,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider.value(value: LogService.instance),
         ChangeNotifierProvider(create: (_) => FirebaseService()..initialize()),
         ChangeNotifierProxyProvider<FirebaseService, GameService>(
           create: (_) => GameService(),
