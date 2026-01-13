@@ -397,7 +397,13 @@ class _ReportBugSheetState extends State<_ReportBugSheet> {
     setState(() => _submitting = true);
     try {
       final firebase = context.read<FirebaseService>();
-      final userId = firebase.userId ?? 'anonymous';
+      // Ensure we have an authenticated user (anonymous is fine)
+      String? userId = firebase.userId;
+      if (userId == null) {
+        await firebase.signInAnonymously();
+        userId = firebase.userId;
+      }
+      userId ??= 'anonymous';
       final comment = _controller.text.trim();
       final logs = LogService.instance.last(100);
 
@@ -412,7 +418,8 @@ class _ReportBugSheetState extends State<_ReportBugSheet> {
         data['comment'] = comment;
       }
 
-      await firebase.firestore.collection('bug_reports').add(data);
+      // Prefer user-scoped path to satisfy common Firestore rules
+      await firebase.firestore.collection('users').doc(userId).collection('bug_reports').add(data);
       if (!mounted) return;
       Navigator.of(context).pop('submitted');
     } catch (e) {

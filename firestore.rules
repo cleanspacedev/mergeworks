@@ -1,43 +1,55 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper function to check if user is authenticated
-    function isAuthenticated() {
-      return request.auth != null;
+    function isSignedIn() { return request.auth != null && request.auth.uid != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isOwnerField(d) { return isSignedIn() && d.user_id == request.auth.uid; }
+
+    // Users collection (optional direct access to the user doc)
+    match /users/{userId} {
+      // Allow a user to access their own user document
+      allow read, create, update, delete: if isOwner(userId);
+
+      // Achievements stored under users/{uid}/achievements/{achievementId}
+      match /achievements/{achievementId} {
+        // Each user can read/write only their own achievements
+        allow read, create, update, delete: if isOwner(userId);
+      }
+
+      // Bug reports stored under users/{uid}/bug_reports/{reportId}
+      match /bug_reports/{reportId} {
+        // Allow a user to submit and view their own bug reports
+        allow create: if isOwner(userId);
+        allow read: if isOwner(userId);
+        // Disallow updates/deletes by default to preserve the report history
+        allow update, delete: if false;
+      }
     }
-    
-    // Helper function to check if user owns the document
-    function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
-    }
-    
-    // Player stats - private to owner
+
+    // Player stats stored as player_stats/{uid}
     match /player_stats/{userId} {
-      allow read: if isOwner(userId);
-      allow create: if isOwner(userId) && request.auth.uid == request.resource.data.user_id;
-      allow update, delete: if isOwner(userId) && resource.data.user_id == request.auth.uid;
+      allow read, create, update, delete: if isOwner(userId);
     }
-    
-    // Grid items - private to owner
+
+    // Grid items with an owner field: user_id
     match /grid_items/{itemId} {
-      allow read: if isAuthenticated() && resource.data.user_id == request.auth.uid;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.user_id;
-      allow update, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      // Read allowed only if the document belongs to the requester
+      allow read: if isOwnerField(resource.data);
+
+      // Create/Update require user_id to match the requester
+      allow create: if isOwnerField(request.resource.data);
+      allow update: if isOwnerField(resource.data) && isOwnerField(request.resource.data);
+
+      // Delete allowed if the existing doc belongs to the requester
+      allow delete: if isOwnerField(resource.data);
     }
-    
-    // Achievements - private to owner
-    match /achievements/{achievementId} {
-      allow read: if isAuthenticated() && resource.data.user_id == request.auth.uid;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.user_id;
-      allow update, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
-    }
-    
-    // Daily quests - private to owner
+
+    // Daily quests with an owner field: user_id
     match /daily_quests/{questId} {
-      allow read: if isAuthenticated() && resource.data.user_id == request.auth.uid;
-      allow create: if isAuthenticated() && request.auth.uid == request.resource.data.user_id;
-      allow update, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow read: if isOwnerField(resource.data);
+      allow create: if isOwnerField(request.resource.data);
+      allow update: if isOwnerField(resource.data) && isOwnerField(request.resource.data);
+      allow delete: if isOwnerField(resource.data);
     }
   }
 }

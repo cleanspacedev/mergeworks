@@ -63,6 +63,8 @@ class ShopService extends ChangeNotifier {
           _productDetailsByItemId[entry.key] = pd;
         }
       }
+      // Update listeners so the UI can enable/disable purchase buttons accordingly
+      notifyListeners();
     } catch (e) {
       debugPrint('IAP load products failed: $e');
     }
@@ -70,8 +72,10 @@ class ShopService extends ChangeNotifier {
 
   String? priceLabelFor(String itemId) {
     final pd = _productDetailsByItemId[itemId];
-    return pd?.price; // Localized price string like "$0.99" or "€0,99"
+    return pd?.price; // Localized price string like "\$0.99" or "€0,99"
   }
+
+  bool hasProductDetails(String itemId) => _productDetailsByItemId.containsKey(itemId);
 
   void _onPurchaseUpdates(List<PurchaseDetails> purchases) async {
     for (final p in purchases) {

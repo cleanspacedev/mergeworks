@@ -98,10 +98,13 @@ class ShopScreen extends StatelessWidget {
           final isAdRemoval = item.type == ShopItemType.adRemoval;
           final alreadyOwned = isAdRemoval && gameService.playerStats.adRemovalPurchased;
           final canAffordGems = isSpecial ? ((item.gemCost ?? 0) <= gameService.playerStats.gems) : true;
-          final disabled = isLocked || alreadyOwned || !canAffordGems;
+          final purchasable = isSpecial || shopService.hasProductDetails(item.id);
+          final disabled = isLocked || alreadyOwned || !canAffordGems || !purchasable;
           final priceLabel = isSpecial
               ? null
-              : (shopService.priceLabelFor(item.id) ?? '\$${item.price.toStringAsFixed(2)}');
+              : (purchasable
+                  ? (shopService.priceLabelFor(item.id) ?? '\$${item.price.toStringAsFixed(2)}')
+                  : 'Unavailable');
           return _ShopItemCard(
             item: item,
             isLocked: isLocked,
