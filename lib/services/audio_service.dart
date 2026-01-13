@@ -28,7 +28,7 @@ class AudioService extends ChangeNotifier {
       // Prepare background music looping
       await _musicPlayer.setReleaseMode(ReleaseMode.loop);
       await _musicPlayer.setVolume(_musicVolume);
-      if (_musicEnabled) {
+      if (_musicEnabled && !kIsWeb) {
         unawaited(_startBackgroundMusic());
       }
       notifyListeners();
@@ -94,6 +94,7 @@ class AudioService extends ChangeNotifier {
   // ========== Background Music ==========
   Future<void> _startBackgroundMusic() async {
     try {
+      if (kIsWeb) return; // Defer music start on web until explicit user action
       await _musicPlayer.stop();
       await _musicPlayer.setReleaseMode(ReleaseMode.loop);
       await _musicPlayer.setSource(AssetSource('assets/audio/Music/bgmusic.wav'));

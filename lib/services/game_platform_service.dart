@@ -6,7 +6,16 @@ class GamePlatformService extends ChangeNotifier {
   bool _signedIn = false;
   bool get signedIn => _signedIn;
 
+  // Only Android/iOS are supported; web should no-op.
+  bool get isAvailable => !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
+
   Future<void> initialize() async {
+    if (!isAvailable) {
+      _signedIn = false;
+      debugPrint('GamesServices init skipped: unsupported platform (${kIsWeb ? 'web' : defaultTargetPlatform.toString()})');
+      notifyListeners();
+      return;
+    }
     try {
       await GamesServices.signIn();
       _signedIn = true;
@@ -20,6 +29,10 @@ class GamePlatformService extends ChangeNotifier {
   }
 
   Future<void> showLeaderboards() async {
+    if (!isAvailable) {
+      debugPrint('Show leaderboards skipped: unsupported platform');
+      return;
+    }
     try {
       await GamesServices.showLeaderboards();
     } catch (e) {
@@ -28,6 +41,10 @@ class GamePlatformService extends ChangeNotifier {
   }
 
   Future<void> showAchievements() async {
+    if (!isAvailable) {
+      debugPrint('Show achievements skipped: unsupported platform');
+      return;
+    }
     try {
       await GamesServices.showAchievements();
     } catch (e) {
@@ -36,6 +53,10 @@ class GamePlatformService extends ChangeNotifier {
   }
 
   Future<void> submitAllScores({required int totalMerges, required int highestTier, required int level}) async {
+    if (!isAvailable) {
+      // Avoid throwing on web where the plugin isn't registered.
+      return;
+    }
     try {
       await GamesServices.submitScore(
         score: Score(
@@ -72,6 +93,7 @@ class GamePlatformService extends ChangeNotifier {
   }
 
   Future<void> unlock(String achievementId) async {
+    if (!isAvailable) return;
     try {
       await GamesServices.unlock(achievement: Achievement(androidID: achievementId, iOSID: achievementId));
     } catch (e) {
@@ -80,6 +102,7 @@ class GamePlatformService extends ChangeNotifier {
   }
 
   Future<void> increment(String achievementId, {int steps = 1}) async {
+    if (!isAvailable) return;
     try {
       await GamesServices.increment(achievement: Achievement(androidID: achievementId, iOSID: achievementId, steps: steps));
     } catch (e) {

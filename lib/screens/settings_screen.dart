@@ -58,25 +58,33 @@ class SettingsScreen extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.lg),
             // Move platform buttons directly under Game Stats
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () => context.read<GamePlatformService>().showLeaderboards(),
-                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-                icon: const Icon(Icons.leaderboard),
-                label: const Text('Global Leaderboards'),
-              ),
-            ),
+            Builder(builder: (context) {
+              final platform = context.watch<GamePlatformService>();
+              if (!platform.isAvailable) return const SizedBox.shrink();
+              return SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: platform.signedIn ? () => context.read<GamePlatformService>().showLeaderboards() : null,
+                  style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                  icon: const Icon(Icons.leaderboard),
+                  label: const Text('Global Leaderboards'),
+                ),
+              );
+            }),
             const SizedBox(height: AppSpacing.sm),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonalIcon(
-                onPressed: () => context.read<GamePlatformService>().showAchievements(),
-                style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
-                icon: const Icon(Icons.emoji_events),
-                label: const Text('Platform Achievements'),
-              ),
-            ),
+            Builder(builder: (context) {
+              final platform = context.watch<GamePlatformService>();
+              if (!platform.isAvailable) return const SizedBox.shrink();
+              return SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  onPressed: platform.signedIn ? () => context.read<GamePlatformService>().showAchievements() : null,
+                  style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                  icon: const Icon(Icons.emoji_events),
+                  label: const Text('Platform Achievements'),
+                ),
+              );
+            }),
             const SizedBox(height: AppSpacing.lg),
 
             _buildSection(

@@ -35,8 +35,9 @@ class AchievementService extends ChangeNotifier {
     try {
       final userId = _firebaseService!.userId!;
       final querySnapshot = await _firebaseService!.firestore
+          .collection('users')
+          .doc(userId)
           .collection('achievements')
-          .where('user_id', isEqualTo: userId)
           .get();
       
       if (querySnapshot.docs.isNotEmpty) {
@@ -197,14 +198,14 @@ class AchievementService extends ChangeNotifier {
     try {
       final userId = _firebaseService!.userId!;
       final batch = _firebaseService!.firestore.batch();
-      
       for (final achievement in _achievements) {
         final docRef = _firebaseService!.firestore
+            .collection('users')
+            .doc(userId)
             .collection('achievements')
             .doc(achievement.id);
         batch.set(docRef, achievement.copyWith(userId: userId).toJson(), SetOptions(merge: true));
       }
-      
       await batch.commit();
     } catch (e) {
       debugPrint('Failed to save achievements: $e');
