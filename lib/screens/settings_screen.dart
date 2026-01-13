@@ -10,6 +10,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/services/game_platform_service.dart';
+import 'package:flutter/services.dart';
+import 'dart:convert';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -416,8 +418,25 @@ class _ReportBugSheetState extends State<_ReportBugSheet> {
     } catch (e) {
       debugPrint('Failed to submit bug report: $e');
       if (!mounted) return;
+      // Fallback: allow user to copy the prepared report to clipboard for emailing
+      final fallback = <String, dynamic>{
+        'userId': context.read<FirebaseService>().userId ?? 'anonymous',
+        'createdAt': DateTime.now().toIso8601String(),
+        'platform': defaultTargetPlatform.toString(),
+        'appVersion': '1.0.0',
+        'comment': _controller.text.trim(),
+        'logs': LogService.instance.last(100),
+        'error': e.toString(),
+      };
+      final text = const JsonEncoder.withIndent('  ').convert(fallback);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to submit. Please try again.')),
+        SnackBar(
+          content: const Text('Failed to submit. Please try again.'),
+          action: SnackBarAction(
+            label: 'Copy Report',
+            onPressed: () => Clipboard.setData(ClipboardData(text: text)),
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _submitting = false);

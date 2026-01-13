@@ -20,6 +20,26 @@ class AudioService extends ChangeNotifier {
 
   Future<void> initialize() async {
     try {
+      // Ensure proper audio context across platforms (playback on iOS even in silent mode)
+      try {
+        final ctx = AudioContext(
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: {AVAudioSessionOptions.mixWithOthers},
+          ),
+          android: AudioContextAndroid(
+            usageType: AndroidUsageType.game,
+            contentType: AndroidContentType.music,
+            audioFocus: AndroidAudioFocus.gain,
+            stayAwake: false,
+          ),
+        );
+        await AudioPlayer.global.setAudioContext(ctx);
+        await _musicPlayer.setAudioContext(ctx);
+      } catch (e) {
+        debugPrint('Failed to set audio context: $e');
+      }
+
       final prefs = await SharedPreferences.getInstance();
       _soundEnabled = prefs.getBool('sound_enabled') ?? true;
       _musicEnabled = prefs.getBool('music_enabled') ?? true;
