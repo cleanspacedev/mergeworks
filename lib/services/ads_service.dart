@@ -16,17 +16,36 @@ class AdsService {
   static const String _testInterstitialAndroid = 'ca-app-pub-3940256099942544/1033173712';
   static const String _testRewardedAndroid = 'ca-app-pub-3940256099942544/5224354917';
 
+  // We initialize the SDK only on Android. iOS is intentionally skipped to avoid TestFlight crashes.
   static bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  Completer<void>? _initCompleter;
+  bool get isInitialized => _initCompleter != null && _initCompleter!.isCompleted;
+
   Future<void> initialize() async {
-    if (!isSupported) return;
+    if (!isSupported) {
+      debugPrint('AdMob initialize skipped: platform=${defaultTargetPlatform.toString()}');
+      return;
+    }
+    if (_initCompleter != null) return _initCompleter!.future;
+    _initCompleter = Completer<void>();
     try {
       await MobileAds.instance.initialize();
-      // Optional: global configuration (e.g., max ad content rating) can go here later.
       debugPrint('AdMob initialized');
+      _initCompleter!.complete();
     } catch (e) {
       debugPrint('AdMob initialize failed: $e');
+      if (!_initCompleter!.isCompleted) _initCompleter!.complete();
     }
+  }
+
+  Future<void> ensureInitialized() async {
+    if (!isSupported) return;
+    if (_initCompleter == null) {
+      await initialize();
+      return;
+    }
+    await _initCompleter!.future;
   }
 
   // --------- Ad Unit ID helpers ---------
@@ -38,7 +57,8 @@ class AdsService {
   InterstitialAd? _interstitial;
   bool _isLoadingInterstitial = false;
 
-  void loadInterstitial() {
+  Future<void> loadInterstitial() async {
+    await ensureInitialized();
     if (!isSupported || _isLoadingInterstitial || _interstitial != null) return;
     _isLoadingInterstitial = true;
     InterstitialAd.load(
@@ -59,6 +79,7 @@ class AdsService {
 
   Future<bool> showInterstitialIfAvailable() async {
     if (!isSupported) return false;
+    await ensureInitialized();
     final ad = _interstitial;
     if (ad == null) return false;
     final c = Completer<bool>();
@@ -91,7 +112,8 @@ class AdsService {
   RewardedAd? _rewarded;
   bool _isLoadingRewarded = false;
 
-  void loadRewarded() {
+  Future<void> loadRewarded() async {
+    await ensureInitialized();
     if (!isSupported || _isLoadingRewarded || _rewarded != null) return;
     _isLoadingRewarded = true;
     RewardedAd.load(
@@ -112,6 +134,7 @@ class AdsService {
 
   Future<bool> showRewardedIfAvailable({required void Function(RewardItem reward) onRewardEarned}) async {
     if (!isSupported) return false;
+    await ensureInitialized();
     final ad = _rewarded;
     if (ad == null) return false;
     final c = Completer<bool>();

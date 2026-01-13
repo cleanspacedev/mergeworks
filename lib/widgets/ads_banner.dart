@@ -33,19 +33,33 @@ class _AdsBannerState extends State<AdsBanner> {
   void initState() {
     super.initState();
     if (_shouldHide) return;
-    final ads = AdsService.instance;
-    _banner = BannerAd(
-      size: AdSize.banner,
-      adUnitId: ads.bannerUnitIdAndroid,
-      request: const AdRequest(),
-      listener: BannerAdListener(
-        onAdLoaded: (ad) => setState(() => _isLoaded = true),
-        onAdFailedToLoad: (ad, error) {
-          debugPrint('Banner failed to load: $error');
-          ad.dispose();
-        },
-      ),
-    )..load();
+    // Ensure the SDK is initialized before creating/loading an ad unit.
+    Future.microtask(() async {
+      try {
+        await AdsService.instance.ensureInitialized();
+        if (!mounted || _shouldHide) return;
+        final ads = AdsService.instance;
+        final banner = BannerAd(
+          size: AdSize.banner,
+          adUnitId: ads.bannerUnitIdAndroid,
+          request: const AdRequest(),
+          listener: BannerAdListener(
+            onAdLoaded: (ad) => mounted ? setState(() => _isLoaded = true) : null,
+            onAdFailedToLoad: (ad, error) {
+              debugPrint('Banner failed to load: $error');
+              ad.dispose();
+            },
+          ),
+        );
+        if (!mounted) {
+          banner.dispose();
+          return;
+        }
+        _banner = banner..load();
+      } catch (e) {
+        debugPrint('Banner init error: $e');
+      }
+    });
   }
 
   @override

@@ -45,5 +45,8 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+    <!-- Google Mobile Ads: Prevent SDK crash by providing an App ID. Replace with your real iOS AdMob App ID before production. -->
+    <key>GADApplicationIdentifier</key>
+    <string>ca-app-pub-3940256099942544~1458002511</string>
 </dict>
 </plist>

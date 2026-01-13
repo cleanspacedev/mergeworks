@@ -30,9 +30,12 @@ void main() async {
     } catch (e) {
       debugPrint('Firebase initialization error: $e');
     }
-    // Initialize AdMob (Android only; no-op elsewhere)
-    await AdsService.instance.initialize();
+    // Initialize AdMob after the first frame (Android only), to avoid early native race conditions
     runApp(const MyApp());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Fire-and-forget; AdsService itself guards platform
+      AdsService.instance.initialize();
+    });
   }, (error, stack) {
     // Ensure uncaught errors are still logged
     LogService.instance.add('Uncaught error: $error');
