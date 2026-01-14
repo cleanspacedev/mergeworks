@@ -6,7 +6,7 @@ import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/services/firebase_service.dart';
 import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/log_service.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:mergeworks/services/bug_report_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/services/game_platform_service.dart';
@@ -103,67 +103,7 @@ class SettingsScreen extends StatelessWidget {
             }),
             const SizedBox(height: AppSpacing.lg),
 
-            _buildSection(
-              context,
-              'Accessibility ♿',
-              [
-                _SettingsTile(
-                  icon: Icons.record_voice_over,
-                  title: 'VoiceOver',
-                  subtitle: a11y.voiceOverHints ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.voiceOverHints, onChanged: a11y.setVoiceOverHints),
-                ),
-                _SettingsTile(
-                  icon: Icons.mic,
-                  title: 'Voice Control',
-                  subtitle: a11y.voiceControlHints ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.voiceControlHints, onChanged: a11y.setVoiceControlHints),
-                ),
-                _SettingsTile(
-                  icon: Icons.format_size,
-                  title: 'Larger Text',
-                  subtitle: a11y.largerText ? '200%' : '100%',
-                  trailing: Switch(value: a11y.largerText, onChanged: a11y.setLargerText),
-                ),
-                _SettingsTile(
-                  icon: Icons.dark_mode,
-                  title: 'Dark Interface',
-                  subtitle: a11y.forceDark ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.forceDark, onChanged: a11y.setForceDark),
-                ),
-                _SettingsTile(
-                  icon: Icons.texture,
-                  title: 'Differentiate Without Color Alone',
-                  subtitle: a11y.differentiateWithoutColor ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.differentiateWithoutColor, onChanged: a11y.setDifferentiateWithoutColor),
-                ),
-                _SettingsTile(
-                  icon: Icons.contrast,
-                  title: 'Sufficient Contrast',
-                  subtitle: a11y.highContrast ? 'High' : 'Standard',
-                  trailing: Switch(value: a11y.highContrast, onChanged: a11y.setHighContrast),
-                ),
-                _SettingsTile(
-                  icon: Icons.motion_photos_off,
-                  title: 'Reduced Motion',
-                  subtitle: a11y.reducedMotion ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.reducedMotion, onChanged: a11y.setReducedMotion),
-                ),
-                _SettingsTile(
-                  icon: Icons.closed_caption,
-                  title: 'Captions',
-                  subtitle: a11y.captionsEnabled ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.captionsEnabled, onChanged: a11y.setCaptionsEnabled),
-                ),
-                _SettingsTile(
-                  icon: Icons.description,
-                  title: 'Audio Descriptions',
-                  subtitle: a11y.audioDescriptions ? 'On' : 'Off',
-                  trailing: Switch(value: a11y.audioDescriptions, onChanged: a11y.setAudioDescriptions),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.lg),
+            // Moved Audio above Accessibility
             _buildSection(
               context,
               'Audio Settings 🔊',
@@ -231,6 +171,69 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.lg),
+
+            // Accessibility now comes after Audio
+            _buildSection(
+              context,
+              'Accessibility ♿',
+              [
+                _SettingsTile(
+                  icon: Icons.record_voice_over,
+                  title: 'VoiceOver',
+                  subtitle: a11y.voiceOverHints ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.voiceOverHints, onChanged: a11y.setVoiceOverHints),
+                ),
+                _SettingsTile(
+                  icon: Icons.mic,
+                  title: 'Voice Control',
+                  subtitle: a11y.voiceControlHints ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.voiceControlHints, onChanged: a11y.setVoiceControlHints),
+                ),
+                _SettingsTile(
+                  icon: Icons.format_size,
+                  title: 'Larger Text',
+                  subtitle: a11y.largerText ? '200%' : '100%',
+                  trailing: Switch(value: a11y.largerText, onChanged: a11y.setLargerText),
+                ),
+                _SettingsTile(
+                  icon: Icons.dark_mode,
+                  title: 'Dark Interface',
+                  subtitle: a11y.forceDark ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.forceDark, onChanged: a11y.setForceDark),
+                ),
+                _SettingsTile(
+                  icon: Icons.texture,
+                  title: 'Differentiate Without Color Alone',
+                  subtitle: a11y.differentiateWithoutColor ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.differentiateWithoutColor, onChanged: a11y.setDifferentiateWithoutColor),
+                ),
+                _SettingsTile(
+                  icon: Icons.contrast,
+                  title: 'Sufficient Contrast',
+                  subtitle: a11y.highContrast ? 'High' : 'Standard',
+                  trailing: Switch(value: a11y.highContrast, onChanged: a11y.setHighContrast),
+                ),
+                _SettingsTile(
+                  icon: Icons.motion_photos_off,
+                  title: 'Reduced Motion',
+                  subtitle: a11y.reducedMotion ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.reducedMotion, onChanged: a11y.setReducedMotion),
+                ),
+                _SettingsTile(
+                  icon: Icons.closed_caption,
+                  title: 'Captions',
+                  subtitle: a11y.captionsEnabled ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.captionsEnabled, onChanged: a11y.setCaptionsEnabled),
+                ),
+                _SettingsTile(
+                  icon: Icons.description,
+                  title: 'Audio Descriptions',
+                  subtitle: a11y.audioDescriptions ? 'On' : 'Off',
+                  trailing: Switch(value: a11y.audioDescriptions, onChanged: a11y.setAudioDescriptions),
                 ),
               ],
             ),
@@ -419,27 +422,46 @@ class _ReportBugSheetState extends State<_ReportBugSheet> {
       }
       userId ??= 'anonymous';
       final comment = _controller.text.trim();
-      final logs = LogService.instance.last(100);
 
-      final Map<String, dynamic> data = {
-        'userId': userId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'platform': defaultTargetPlatform.toString(),
-        'appVersion': '1.0.0',
-        'logs': logs,
-      };
-      if (comment.isNotEmpty) {
-        data['comment'] = comment;
-      }
+      // Submit via centralized service (writes both user-scoped and central docs)
+      final bugService = context.read<BugReportService>();
+      final id = await bugService.submitBugReport(
+        title: 'User bug report',
+        description: comment.isEmpty ? '(no description)' : comment,
+        extras: {
+          'source': 'settings',
+          'appVersion': '1.0.0',
+          'platform': defaultTargetPlatform.toString(),
+        },
+      );
 
-      // Prefer user-scoped path to satisfy common Firestore rules
-      await firebase.firestore.collection('users').doc(userId).collection('bug_reports').add(data);
       if (!mounted) return;
-      Navigator.of(context).pop('submitted');
+      if (id != null) {
+        Navigator.of(context).pop('submitted');
+      } else {
+        // Fall back: allow user to copy the prepared report to clipboard for emailing
+        final fallback = <String, dynamic>{
+          'userId': userId,
+          'createdAt': DateTime.now().toIso8601String(),
+          'platform': defaultTargetPlatform.toString(),
+          'appVersion': '1.0.0',
+          'comment': comment,
+          'logs': LogService.instance.last(100),
+        };
+        final text = const JsonEncoder.withIndent('  ').convert(fallback);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to submit. Please try again.'),
+            action: SnackBarAction(
+              label: 'Copy Report',
+              onPressed: () => Clipboard.setData(ClipboardData(text: text)),
+            ),
+          ),
+        );
+      }
     } catch (e) {
       debugPrint('Failed to submit bug report: $e');
       if (!mounted) return;
-      // Fallback: allow user to copy the prepared report to clipboard for emailing
       final fallback = <String, dynamic>{
         'userId': context.read<FirebaseService>().userId ?? 'anonymous',
         'createdAt': DateTime.now().toIso8601String(),

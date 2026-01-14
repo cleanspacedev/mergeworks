@@ -8,12 +8,14 @@ class GridItemWidget extends StatefulWidget {
   final GameItem item;
   final bool isHighlighted;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   const GridItemWidget({
     super.key,
     required this.item,
     this.isHighlighted = false,
     this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -49,11 +51,16 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
     
     return Semantics(
       label: 'Tier ${widget.item.tier} item',
-      hint: a11y.voiceOverHints ? 'Double tap to select or merge' : null,
+      hint: (a11y.voiceOverHints || a11y.voiceControlHints)
+          ? 'Double tap to select. Long-press to auto-select if unlocked.'
+          : null,
+      onTapHint: a11y.voiceControlHints ? 'Select item' : null,
+      onLongPressHint: a11y.voiceControlHints ? 'Auto-select nearby items' : null,
       button: true,
       enabled: widget.onTap != null,
       child: GestureDetector(
         onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
         child: AnimatedScale(
           scale: widget.isHighlighted ? 1.18 : 1.0,
           duration: Duration(milliseconds: a11y.reducedMotion ? 0 : 200),
@@ -76,7 +83,7 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
               border: widget.isHighlighted
                   ? Border.all(
                       color: Theme.of(context).colorScheme.secondary,
-                      width: 2,
+                      width: a11y.highContrast ? 3 : 2,
                     )
                   : null,
               boxShadow: widget.isHighlighted
@@ -89,29 +96,43 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
                     ]
                   : null,
             ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  if (a11y.reducedMotion)
-                    Text(widget.item.emoji, style: TextStyle(fontSize: size))
-                  else
-                    ScaleTransition(
-                      scale: widget.isHighlighted ? _scaleAnimation : const AlwaysStoppedAnimation(1.0),
-                      child: Text(
-                        widget.item.emoji,
-                        style: TextStyle(fontSize: size),
-                      ),
-                    ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'T${widget.item.tier}',
-                    style: context.textStyles.labelSmall?.bold.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+            child: Stack(
+              children: [
+                Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (a11y.reducedMotion)
+                          Text(widget.item.emoji, style: TextStyle(fontSize: size))
+                        else
+                          ScaleTransition(
+                            scale: widget.isHighlighted ? _scaleAnimation : const AlwaysStoppedAnimation(1.0),
+                            child: Text(
+                              widget.item.emoji,
+                              style: TextStyle(fontSize: size),
+                            ),
+                          ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'T${widget.item.tier}',
+                          style: context.textStyles.labelSmall?.bold.copyWith(
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
+                ),
+                if (widget.isHighlighted && a11y.differentiateWithoutColor)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Icon(Icons.texture, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+              ],
             ),
           ),
         ),

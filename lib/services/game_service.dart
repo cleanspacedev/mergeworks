@@ -192,13 +192,37 @@ class GameService extends ChangeNotifier {
         await _savePlayerStats();
       }
 
-      // Load grid items from Firestore
-      final itemsQuery = await _firebaseService!.firestore
-          .collection('grid_items')
-          .where('user_id', isEqualTo: userId)
-          .get();
-      
-      _gridItems = itemsQuery.docs
+      // Load grid items from Firestore (user-scoped subcollection preferred)
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> itemDocs = [];
+      try {
+        final subColSnap = await _firebaseService!.firestore
+            .collection('player_stats')
+            .doc(userId)
+            .collection('grid_items')
+            .get();
+        itemDocs = subColSnap.docs;
+        debugPrint('Loaded ${itemDocs.length} grid items from subcollection.');
+      } catch (e) {
+        debugPrint('Failed to load subcollection grid items: $e');
+      }
+
+      // Backward-compat: if subcollection is empty, fall back to old top-level collection
+      if (itemDocs.isEmpty) {
+        try {
+          final legacySnap = await _firebaseService!.firestore
+              .collection('grid_items')
+              .where('user_id', isEqualTo: userId)
+              .get();
+          itemDocs = legacySnap.docs;
+          if (itemDocs.isNotEmpty) {
+            debugPrint('Loaded ${itemDocs.length} grid items from legacy top-level collection. Will migrate to subcollection on next save.');
+          }
+        } catch (e) {
+          debugPrint('Failed to load legacy grid items (top-level): $e');
+        }
+      }
+
+      _gridItems = itemDocs
           .map((doc) => GameItem.fromJson({...doc.data(), 'id': doc.id}))
           .toList();
 
@@ -700,6 +724,7 @@ class GameService extends ChangeNotifier {
   Future<bool> abilityShuffleBoard({required int cost}) async {
     if (!_spendCoinsIfPossible(cost)) return false;
     try {
+      // Build all grid positions and shuffle them
       final positions = <Map<String, int>>[];
       for (int y = 0; y < gridSize; y++) {
         for (int x = 0; x < gridSize; x++) {
@@ -707,17 +732,43 @@ class GameService extends ChangeNotifier {
         }
       }
       positions.shuffle(_rand);
-      // Assign as many positions as items we have
-      for (int i = 0; i < _gridItems.length; i++) {
-        final pos = positions[i];
-        _gridItems[i] = _gridItems[i].copyWith(gridX: pos['x'], gridY: pos['y']);
+      final maxCells = positions.length; // gridSize * gridSize
+
+      // Only consider items currently on the board (with grid positions)
+      final onBoard = _gridItems.where((i) => i.gridX != null && i.gridY != null).toList();
+      if (onBoard.isEmpty) {
+        debugPrint('Shuffle skipped: no on-board items to shuffle.');
+        // Refund coins since no action performed
+        _playerStats = _playerStats.copyWith(coins: _playerStats.coins + cost, updatedAt: DateTime.now());
+        await _savePlayerStats();
+        return false;
       }
+
+      // Clear positions of only on-board items so we can reassign cleanly
+      final indexById = <String, int>{ for (var i = 0; i < _gridItems.length; i++) _gridItems[i].id : i };
+      for (final item in onBoard) {
+        final idx = indexById[item.id]!;
+        _gridItems[idx] = _gridItems[idx].copyWith(gridX: null, gridY: null);
+      }
+
+      // Place exactly the same number of items as were on-board; leave empty cells empty
+      final placeCount = onBoard.length.clamp(0, maxCells);
+      for (int i = 0; i < placeCount; i++) {
+        final pos = positions[i];
+        final item = onBoard[i];
+        final idx = indexById[item.id]!;
+        _gridItems[idx] = _gridItems[idx].copyWith(gridX: pos['x'], gridY: pos['y']);
+      }
+
       await _saveState();
       notifyListeners();
-      debugPrint('Board shuffled using ability.');
+      debugPrint('Board shuffled using ability. Items moved: $placeCount. No new items added.');
       return true;
     } catch (e) {
       debugPrint('Shuffle ability failed: $e');
+      // Refund coins since shuffle did not complete
+      _playerStats = _playerStats.copyWith(coins: _playerStats.coins + cost, updatedAt: DateTime.now());
+      await _savePlayerStats();
       return false;
     }
   }
@@ -931,26 +982,49 @@ class GameService extends ChangeNotifier {
     try {
       final userId = _firebaseService!.userId!;
       final batch = _firebaseService!.firestore.batch();
+      final subCol = _firebaseService!.firestore
+          .collection('player_stats')
+          .doc(userId)
+          .collection('grid_items');
       
-      // Delete all existing items for this user
-      final existingItems = await _firebaseService!.firestore
-          .collection('grid_items')
-          .where('user_id', isEqualTo: userId)
-          .get();
-      
+      // Delete all existing items for this user (in subcollection)
+      final existingItems = await subCol.get();
       for (final doc in existingItems.docs) {
         batch.delete(doc.reference);
       }
       
       // Add current items
       for (final item in _gridItems) {
-        final docRef = _firebaseService!.firestore
-            .collection('grid_items')
-            .doc(item.id);
+        final docRef = subCol.doc(item.id);
         batch.set(docRef, item.copyWith(userId: userId).toJson());
       }
       
       await batch.commit();
+      debugPrint('Saved ${_gridItems.length} grid items to subcollection for user $userId');
+    } on FirebaseException catch (e) {
+      debugPrint('Failed to save grid items (subcollection) [${e.code}]: ${e.message}');
+      // Legacy fallback: attempt top-level write if rules still allow it
+      try {
+        final userId = _firebaseService!.userId!;
+        final batch = _firebaseService!.firestore.batch();
+        final legacyQuery = await _firebaseService!.firestore
+            .collection('grid_items')
+            .where('user_id', isEqualTo: userId)
+            .get();
+        for (final doc in legacyQuery.docs) {
+          batch.delete(doc.reference);
+        }
+        for (final item in _gridItems) {
+          final docRef = _firebaseService!.firestore
+              .collection('grid_items')
+              .doc(item.id);
+          batch.set(docRef, item.copyWith(userId: userId).toJson());
+        }
+        await batch.commit();
+        debugPrint('Saved ${_gridItems.length} grid items to legacy top-level collection for user $userId');
+      } catch (e2) {
+        debugPrint('Failed to save grid items (legacy fallback): $e2');
+      }
     } catch (e) {
       debugPrint('Failed to save grid items: $e');
     }
@@ -1016,6 +1090,17 @@ class GameService extends ChangeNotifier {
       case 'special_time_warp':
         // Instant +100 energy
         await addEnergy(100);
+        return true;
+      case 'special_auto_select_upgrade':
+        final current = _playerStats.autoSelectCount;
+        if (current >= 10) {
+          // Refund, already at cap
+          _playerStats = _playerStats.copyWith(gems: _playerStats.gems + gemCost, updatedAt: DateTime.now());
+          return false;
+        }
+        _playerStats = _playerStats.copyWith(autoSelectCount: (current == 0 ? 3 : (current + 1).clamp(3, 10)), updatedAt: DateTime.now());
+        await _savePlayerStats();
+        notifyListeners();
         return true;
       default:
         // Unknown special -> refund

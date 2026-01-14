@@ -16,7 +16,8 @@ class AccessibilityService extends ChangeNotifier {
   static const _kVoiceControlHints = 'voice_control_hints';
 
   bool largerText = false; // 200% when true
-  bool forceDark = false;
+  // Default to dark mode ON from first launch
+  bool forceDark = true;
   bool differentiateWithoutColor = false;
   bool highContrast = false;
   bool reducedMotion = false;
@@ -42,6 +43,14 @@ class AccessibilityService extends ChangeNotifier {
         audioDescriptions = map.contains(_kAudioDescriptions);
         voiceOverHints = map.contains(_kVoiceOverHints);
         voiceControlHints = map.contains(_kVoiceControlHints);
+        // Migration: if prefs exist but are empty (legacy), default to dark and persist
+        if (map.isEmpty) {
+          forceDark = true;
+          await _persist();
+        }
+      } else {
+        // No stored settings yet; persist defaults (with dark mode enabled)
+        await _persist();
       }
     } catch (e) {
       debugPrint('Failed to load a11y settings: $e');

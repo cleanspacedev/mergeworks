@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter/widgets.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
@@ -12,6 +13,7 @@ class AudioService extends ChangeNotifier {
   bool _musicEnabled = true;
   double _musicVolume = 1.0;
   double _sfxVolume = 1.0;
+  bool _isMusicPlaying = false; // track state to avoid double starts
 
   bool get soundEnabled => _soundEnabled;
   bool get musicEnabled => _musicEnabled;
@@ -20,22 +22,24 @@ class AudioService extends ChangeNotifier {
 
   Future<void> initialize() async {
     try {
-      // Ensure proper audio context across platforms (playback on iOS even in silent mode)
+      // Ensure proper audio context across platforms (mobile only)
       try {
-        final ctx = AudioContext(
-          iOS: AudioContextIOS(
-            category: AVAudioSessionCategory.playback,
-            options: {AVAudioSessionOptions.mixWithOthers, AVAudioSessionOptions.defaultToSpeaker},
-          ),
-          android: AudioContextAndroid(
-            usageType: AndroidUsageType.game,
-            contentType: AndroidContentType.music,
-            audioFocus: AndroidAudioFocus.gain,
-            stayAwake: false,
-          ),
-        );
-        await AudioPlayer.global.setAudioContext(ctx);
-        await _musicPlayer.setAudioContext(ctx);
+        if (!kIsWeb) {
+          final ctx = AudioContext(
+            iOS: AudioContextIOS(
+              category: AVAudioSessionCategory.playback,
+              options: {AVAudioSessionOptions.mixWithOthers},
+            ),
+            android: AudioContextAndroid(
+              usageType: AndroidUsageType.game,
+              contentType: AndroidContentType.music,
+              audioFocus: AndroidAudioFocus.gain,
+              stayAwake: false,
+            ),
+          );
+          await AudioPlayer.global.setAudioContext(ctx);
+          await _musicPlayer.setAudioContext(ctx);
+        }
       } catch (e) {
         debugPrint('Failed to set audio context: $e');
       }
@@ -111,15 +115,30 @@ class AudioService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Public: call on first user gesture (enables bg music on Web and ensures start elsewhere)
+  Future<void> maybeStartMusicFromUserGesture() async {
+    if (!_musicEnabled) {
+      debugPrint('MUSIC: Not starting (music disabled)');
+      return;
+    }
+    if (_isMusicPlaying) {
+      debugPrint('MUSIC: Already playing');
+      return;
+    }
+    // On web we intentionally defer autoplay until a user gesture triggers this
+    await _startBackgroundMusic(force: true);
+  }
+
   // ========== Background Music ==========
-  Future<void> _startBackgroundMusic() async {
+  Future<void> _startBackgroundMusic({bool force = false}) async {
     try {
-      if (kIsWeb) return; // Defer music start on web until explicit user action
+      if (kIsWeb && !force) return; // Defer music start on web until explicit user action
       await _musicPlayer.stop();
       await _musicPlayer.setReleaseMode(ReleaseMode.loop);
       await _musicPlayer.setSource(AssetSource('audio/Music/bgmusic.wav'));
       await _musicPlayer.setVolume(_musicVolume);
       await _musicPlayer.resume();
+      _isMusicPlaying = true;
       debugPrint('MUSIC: Background music started');
     } catch (e) {
       debugPrint('Failed to start background music: $e');
@@ -129,6 +148,7 @@ class AudioService extends ChangeNotifier {
   Future<void> _stopBackgroundMusic() async {
     try {
       await _musicPlayer.stop();
+      _isMusicPlaying = false;
       debugPrint('MUSIC: Background music stopped');
     } catch (e) {
       debugPrint('Failed to stop background music: $e');
@@ -186,6 +206,10 @@ class AudioService extends ChangeNotifier {
 
   Future<void> _maybeAnnounce(String text) async {
     try {
+      // Avoid engine asserts on web and when semantics are disabled
+      if (kIsWeb) return;
+      final dispatcher = WidgetsBinding.instance.platformDispatcher;
+      if (!dispatcher.semanticsEnabled) return;
       final prefs = await SharedPreferences.getInstance();
       final enabled = prefs.getBool('a11y_audio_desc') ?? false;
       if (enabled) {

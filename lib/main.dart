@@ -18,11 +18,12 @@ import 'dart:async';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/widgets/captions_overlay.dart';
+import 'package:mergeworks/services/bug_report_service.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
   // Capture console outputs and framework errors into LogService
   await runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
     LogService.hookGlobalLogging();
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
@@ -80,10 +81,17 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AccessibilityService()..initialize()),
         Provider(create: (_) => HapticsService()),
         Provider.value(value: AdsService.instance),
+        ChangeNotifierProxyProvider<FirebaseService, BugReportService>(
+          create: (_) => BugReportService(),
+          update: (_, firebaseService, bugReportService) {
+            bugReportService!.firebaseService = firebaseService;
+            return bugReportService;
+          },
+        ),
       ],
       child: Consumer<AccessibilityService>(
         builder: (context, a11y, _) {
-          final ThemeMode mode = a11y.forceDark ? ThemeMode.dark : ThemeMode.system;
+          final ThemeMode mode = a11y.forceDark ? ThemeMode.dark : ThemeMode.light;
           final effectiveLight = a11y.highContrast ? highContrastLightTheme() : lightTheme;
           final effectiveDark = a11y.highContrast ? highContrastDarkTheme() : darkTheme;
           return MaterialApp.router(

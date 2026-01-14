@@ -17,6 +17,7 @@ class PlayerStats {
   final int wildcardOrbs; // inventory of wildcard consumables
   final int bombRunes; // clear 3x3 area consumable
   final int tierUpTokens; // upgrade item by +1 tier consumable
+  final int autoSelectCount; // permanent: long-press selects up to this many items (0=disabled)
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -37,6 +38,7 @@ class PlayerStats {
     this.wildcardOrbs = 0,
     this.bombRunes = 0,
     this.tierUpTokens = 0,
+    this.autoSelectCount = 0,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) : lastEnergyUpdate = lastEnergyUpdate ?? DateTime.now(),
@@ -60,6 +62,7 @@ class PlayerStats {
     int? wildcardOrbs,
     int? bombRunes,
     int? tierUpTokens,
+    int? autoSelectCount,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => PlayerStats(
@@ -79,6 +82,7 @@ class PlayerStats {
     wildcardOrbs: wildcardOrbs ?? this.wildcardOrbs,
     bombRunes: bombRunes ?? this.bombRunes,
     tierUpTokens: tierUpTokens ?? this.tierUpTokens,
+    autoSelectCount: autoSelectCount ?? this.autoSelectCount,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -100,6 +104,7 @@ class PlayerStats {
     'wildcardOrbs': wildcardOrbs,
     'bombRunes': bombRunes,
     'tierUpTokens': tierUpTokens,
+    'autoSelectCount': autoSelectCount,
     'createdAt': Timestamp.fromDate(createdAt),
     'updatedAt': Timestamp.fromDate(updatedAt),
   };
@@ -128,6 +133,7 @@ class PlayerStats {
       wildcardOrbs: json['wildcardOrbs'] ?? 0,
       bombRunes: json['bombRunes'] ?? 0,
       tierUpTokens: json['tierUpTokens'] ?? 0,
+      autoSelectCount: json['autoSelectCount'] ?? 0,
       createdAt: parseDate(json['createdAt']),
       updatedAt: parseDate(json['updatedAt']),
     );

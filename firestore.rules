@@ -29,6 +29,12 @@ service cloud.firestore {
     // Player stats stored as player_stats/{uid}
     match /player_stats/{userId} {
       allow read, create, update, delete: if isOwner(userId);
+
+      // Grid items subcollection under player_stats/{uid}/grid_items/{itemId}
+      match /grid_items/{itemId} {
+        // Each user can read/write only their own grid items
+        allow read, create, update, delete: if isOwner(userId);
+      }
     }
 
     // Grid items with an owner field: user_id
@@ -50,6 +56,16 @@ service cloud.firestore {
       allow create: if isOwnerField(request.resource.data);
       allow update: if isOwnerField(resource.data) && isOwnerField(request.resource.data);
       allow delete: if isOwnerField(resource.data);
+    }
+
+    // Centralized bug reports collection at top-level: bug_reports/{reportId}
+    match /bug_reports/{reportId} {
+      // Allow any authenticated user to submit bug reports
+      allow create: if isSignedIn();
+      // Only allow reading your own reports (reports have a user_id field)
+      allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
+      // Disallow updates/deletes to preserve report history
+      allow update, delete: if false;
     }
   }
 }

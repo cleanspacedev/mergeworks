@@ -214,6 +214,16 @@ class ShopService extends ChangeNotifier {
       gemCost: 120,
       requiredLevel: 1,
     ),
+    ShopItem(
+      id: 'special_auto_select_upgrade',
+      name: 'Auto-Select Upgrade',
+      description: 'Hold on an item to auto-select closest items (up to 10).',
+      icon: '🧠',
+      price: 0.0,
+      type: ShopItemType.special,
+      gemCost: 160,
+      requiredLevel: 2,
+    ),
   ];
 
   List<ShopItem> get items => _items;

@@ -68,6 +68,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   }
 
   void _onItemTap(GameItem item, GameService gameService) {
+    // Ensure BG music can start on platforms that require a user gesture (e.g., Web)
+    context.read<AudioService>().maybeStartMusicFromUserGesture();
     setState(() {
       // Toggle off if already selected
       if (_highlightedItems.contains(item.id)) {
@@ -138,6 +140,101 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       _invalidMergeAttempts = 0;
       context.read<AudioService>().playClickSound();
     });
+  }
+
+  void _onItemLongPress(GameItem item, GameService gameService) {
+    context.read<AudioService>().maybeStartMusicFromUserGesture();
+    final count = gameService.playerStats.autoSelectCount;
+    if (count <= 0) {
+      _showCenterPopup('Unlock Auto-Select in the Shop (💎)');
+      return;
+    }
+    if (item.gridX == null || item.gridY == null) return;
+
+    // Determine base tier for selection
+    int? baseTier;
+    if (item.isWildcard) {
+      // If anchor is a wildcard, choose the nearest non-wild item as the base
+      final nonWild = gameService.gridItems.where((gi) => gi.gridX != null && gi.gridY != null && !gi.isWildcard).toList();
+      if (nonWild.isEmpty) {
+        _showCenterPopup('No base item near wildcard');
+        return;
+      }
+      int distSq(GameItem a) {
+        final dx = (a.gridX! - item.gridX!);
+        final dy = (a.gridY! - item.gridY!);
+        return dx * dx + dy * dy;
+      }
+      nonWild.sort((a, b) => distSq(a).compareTo(distSq(b)));
+      baseTier = nonWild.first.tier;
+    } else {
+      baseTier = item.tier;
+    }
+
+    // BFS over 8-directionally adjacent tiles; include only base-tier or wildcards
+    final Set<String> picked = {item.id};
+    final List<GameItem> queue = [item];
+
+    int anchorX = item.gridX!;
+    int anchorY = item.gridY!;
+
+    bool isEligible(GameItem gi) => gi.gridX != null && gi.gridY != null && (gi.isWildcard || gi.tier == baseTier);
+    int distSqFromAnchor(GameItem a) {
+      final dx = (a.gridX! - anchorX);
+      final dy = (a.gridY! - anchorY);
+      return dx * dx + dy * dy;
+    }
+
+    while (queue.isNotEmpty && picked.length < count) {
+      final current = queue.removeAt(0);
+      // Find neighbors by scanning board (grid is small; fine for now)
+      final neighbors = gameService.gridItems
+          .where((gi) => gi.id != current.id && isEligible(gi) && _areAdjacent8(current, gi) && !picked.contains(gi.id))
+          .toList();
+      // Prefer closer to the anchor to keep the cluster "closest"
+      neighbors.sort((a, b) => distSqFromAnchor(a).compareTo(distSqFromAnchor(b)));
+      for (final n in neighbors) {
+        if (picked.length >= count) break;
+        picked.add(n.id);
+        queue.add(n);
+      }
+    }
+
+    // Keep the valid connected group even if it cannot merge yet
+    final minNeeded = gameService.powerMergeCharges > 0 ? 2 : 3;
+
+    setState(() {
+      _highlightedItems
+        ..clear()
+        ..addAll(picked);
+      _selectedItem = item;
+      _invalidMergeAttempts = 0;
+    });
+
+    // Feedback
+    context.read<AudioService>().playClickSound();
+    context.read<HapticsService>().successSoft();
+
+    // Attempt auto-merge if valid
+    final itemsToMerge = gameService.gridItems.where((gi) => picked.contains(gi.id)).toList();
+    final canAutoMerge = picked.length >= minNeeded && gameService.canMerge(itemsToMerge);
+    if (canAutoMerge) {
+      // Use same merge flow as the Merge button
+      unawaited(_performMerge(
+        gameService,
+        context.read<AudioService>(),
+        context.read<AchievementService>(),
+        context.read<QuestService>(),
+        context.read<HapticsService>(),
+      ));
+      return; // Skip the "Auto-selected" hint to avoid double messaging
+    }
+
+    if (picked.length < minNeeded) {
+      _showCenterPopup('Need $minNeeded or more to merge');
+    } else {
+      _showCenterPopup('Auto-selected ${picked.length}');
+    }
   }
 
   // Returns true if candidate is orthogonally adjacent to any currently selected item
@@ -598,6 +695,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                         item: item,
                         isHighlighted: _highlightedItems.contains(item.id),
                         onTap: () => _onItemTap(item, gameService),
+                        onLongPress: () => _onItemLongPress(item, gameService),
                       ),
                     );
                   }
@@ -615,6 +713,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                     return InkWell(
                       borderRadius: BorderRadius.circular(AppRadius.sm),
                       onTap: () async {
+                        context.read<AudioService>().maybeStartMusicFromUserGesture();
                         final ok = await gameService.abilityPlaceWildcardAt(x, y);
                         if (ok) {
                           if (mounted) {
@@ -643,7 +742,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   Widget _buildBottomBar(BuildContext context, GameService gameService) {
     final canPowerMerge = _highlightedItems.length == 2 && _areTwoSameTier(gameService) && gameService.powerMergeCharges > 0;
     final canMergeNow = _highlightedItems.length >= 3 || canPowerMerge;
-    final isBoardFull = gameService.gridItems.length >= GameService.gridSize * GameService.gridSize;
+    final onBoardCount = gameService.gridItems.where((i) => i.gridX != null && i.gridY != null).length;
+    final isBoardFull = onBoardCount >= GameService.gridSize * GameService.gridSize;
     final coins = gameService.playerStats.coins;
     final hasSelection = _selectedItem != null;
     final canAffordSummon = coins >= 80;
@@ -681,13 +781,12 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   onPressed: (isBoardFull || !canAffordSummon)
                       ? null
                       : () async {
+                          context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
                           if (ok) {
                             context.read<HapticsService>().onSummon();
-                            context.read<AudioService>().playAbilityUseSound();
                             _showMessage('Summoned new items ✨');
                           } else {
-                            // If it failed, likely coins were insufficient (board-full is pre-disabled)
                             _showMessage(isBoardFull ? 'Board is full' : 'Not enough coins');
                           }
                         },
@@ -699,8 +798,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   color: Theme.of(context).colorScheme.primary,
                   onPressed: (hasSelection && canAffordDuplicate)
                       ? () async {
+                          context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
-                          if (ok) { context.read<HapticsService>().onAbilityDuplicate(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Duplicated item ➕'); }
+                          if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); }
                           else _showMessage('Action failed or not enough coins');
                         }
                       : null,
@@ -712,11 +812,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   color: Theme.of(context).colorScheme.error,
                   onPressed: (hasSelection && canAffordClear)
                       ? () async {
+                          context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilityClearItem(_selectedItem!.id, cost: 100);
                           if (ok) {
                             setState(() { _selectedItem = null; _highlightedItems.clear(); });
                             context.read<HapticsService>().onAbilityClear();
-                            context.read<AudioService>().playAbilityUseSound();
                             _showMessage('Cleared item 🧹');
                           } else {
                             _showMessage('Action failed or not enough coins');
@@ -731,8 +831,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   color: Theme.of(context).colorScheme.secondary,
                   onPressed: canAffordShuffle
                       ? () async {
+                          context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilityShuffleBoard(cost: 150);
-                          if (ok) { context.read<HapticsService>().onAbilityShuffle(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Shuffled the board 🔀'); }
+                          if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); }
                           else _showMessage('Not enough coins');
                         }
                       : null,
@@ -745,8 +846,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   color: Theme.of(context).colorScheme.primaryContainer,
                   onPressed: canAffordPowerMerge
                       ? () async {
+                          context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
-                          if (ok) { context.read<HapticsService>().onPowerMergePurchased(); context.read<AudioService>().playAbilityUseSound(); _showMessage('Power Merge ready ⚡'); }
+                          if (ok) { context.read<HapticsService>().onPowerMergePurchased(); _showMessage('Power Merge ready ⚡'); }
                           else _showMessage('Not enough coins');
                         }
                       : null,

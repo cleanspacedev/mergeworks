@@ -108,16 +108,22 @@ class ShopScreen extends StatelessWidget {
           final alreadyOwned = isAdRemoval && gameService.playerStats.adRemovalPurchased;
           final canAffordGems = isSpecial ? ((item.gemCost ?? 0) <= gameService.playerStats.gems) : true;
           final purchasable = isSpecial || shopService.hasProductDetails(item.id);
-          final disabled = isLocked || alreadyOwned || !canAffordGems || !purchasable;
+          final bool isAuto = item.id == 'special_auto_select_upgrade';
+          final int autoCount = gameService.playerStats.autoSelectCount;
+          final bool atCap = isAuto && autoCount >= 10;
+          final disabled = isLocked || alreadyOwned || !canAffordGems || !purchasable || atCap;
           final priceLabel = isSpecial
               ? null
               : (purchasable
                   ? (shopService.priceLabelFor(item.id) ?? '\$${item.price.toStringAsFixed(2)}')
                   : 'Unavailable');
+          final displayItem = isAuto
+              ? item.copyWith(name: '${item.name} (Lv ${autoCount == 0 ? 0 : autoCount}/10)')
+              : item;
           return _ShopItemCard(
-            item: item,
-            isLocked: isLocked,
-            lockLabel: isLocked ? 'Reach Level ${item.requiredLevel}' : null,
+            item: displayItem,
+            isLocked: isLocked || atCap,
+            lockLabel: atCap ? 'Maxed' : (isLocked ? 'Reach Level ${item.requiredLevel}' : null),
             disabled: disabled,
             priceLabel: priceLabel,
             onPurchase: disabled ? null : () => _handlePurchase(context, item, shopService, gameService),
