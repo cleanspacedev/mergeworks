@@ -505,7 +505,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         return Scaffold(
           body: Stack(
             children: [
-              Container(
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 700),
+                curve: Curves.easeInOut,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     begin: Alignment.topCenter,
@@ -622,17 +624,24 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-                  borderRadius: BorderRadius.circular(20),
+              GestureDetector(
+                onTap: () => context.push('/level'),
+                child: Semantics(
+                  button: true,
+                  label: 'Open Level details',
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(children: [
+                      Icon(Icons.auto_awesome, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 6),
+                      Text('Level ${gameService.currentLevel}', style: context.textStyles.labelLarge?.medium.withColor(Theme.of(context).colorScheme.onSurface)),
+                    ]),
+                  ),
                 ),
-                child: Row(children: [
-                  Icon(Icons.auto_awesome, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  const SizedBox(width: 6),
-                  Text('Level ${gameService.currentLevel}', style: context.textStyles.labelLarge?.medium.withColor(Theme.of(context).colorScheme.onSurface)),
-                ]),
               ),
               const SizedBox(width: AppSpacing.sm),
               IconButton(

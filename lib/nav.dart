@@ -6,6 +6,7 @@ import 'package:mergeworks/screens/shop_screen.dart';
 import 'package:mergeworks/screens/achievements_screen.dart';
 import 'package:mergeworks/screens/settings_screen.dart';
 import 'package:mergeworks/screens/daily_spin_screen.dart';
+import 'package:mergeworks/screens/level_screen.dart';
 
 class AppRouter {
   static final GoRouter router = GoRouter(
@@ -53,6 +54,13 @@ class AppRouter {
           child: DailySpinScreen(),
         ),
       ),
+      GoRoute(
+        path: AppRoutes.level,
+        name: 'level',
+        pageBuilder: (context, state) => const MaterialPage(
+          child: LevelScreen(),
+        ),
+      ),
     ],
   );
 }
@@ -64,4 +72,5 @@ class AppRoutes {
   static const String achievements = '/achievements';
   static const String settings = '/settings';
   static const String dailySpin = '/daily-spin';
+  static const String level = '/level';
 }
