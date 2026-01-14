@@ -156,7 +156,7 @@ class AudioService extends ChangeNotifier {
   }
 
   // ========== SFX Helpers ==========
-  Future<void> _playSfx(String assetPath, {double volume = 1.0, String? caption}) async {
+  Future<void> _playSfx(String assetPath, {double volume = 1.0, String? caption, double playbackRate = 1.0}) async {
     if (!_soundEnabled) return;
     try {
       final player = AudioPlayer();
@@ -166,6 +166,8 @@ class AudioService extends ChangeNotifier {
       await player.setReleaseMode(ReleaseMode.stop);
       final effective = (volume * _sfxVolume).clamp(0.0, 1.0);
       await player.setVolume(effective);
+      // Best-effort: adjust playback rate if supported by platform
+      try { await player.setPlaybackRate(playbackRate); } catch (_) {}
       await player.play(AssetSource(assetPath));
       if (caption != null) {
         debugPrint('SFX: $caption');
@@ -182,6 +184,17 @@ class AudioService extends ChangeNotifier {
     final variants = ['audio/FX/merge1.wav', 'audio/FX/merge2.wav', 'audio/FX/merge3.wav'];
     final pick = variants[_rand.nextInt(variants.length)];
     await _playSfx(pick, volume: 0.9, caption: 'Merge');
+  }
+
+  Future<void> playMergeSoundTuned({required int tier, required int selectionCount}) async {
+    if (!_soundEnabled) return;
+    // Subtle rate increase for higher tiers and larger merges; capped to avoid artifacts.
+    final double tierBoost = (tier.clamp(1, 50) - 1) * 0.02; // +2% per tier above 1
+    final double countBoost = (selectionCount.clamp(2, 8) - 3) * 0.015; // +1.5% per extra above 3
+    final double rate = (1.0 + tierBoost + countBoost).clamp(1.0, 1.25);
+    final variants = ['audio/FX/merge1.wav', 'audio/FX/merge2.wav', 'audio/FX/merge3.wav'];
+    final pick = variants[_rand.nextInt(variants.length)];
+    await _playSfx(pick, volume: 0.95, caption: 'Merge T$tier x$selectionCount', playbackRate: rate);
   }
 
   Future<void> playSuccessSound() async {

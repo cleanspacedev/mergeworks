@@ -751,7 +751,7 @@ class GameService extends ChangeNotifier {
         _gridItems[idx] = _gridItems[idx].copyWith(gridX: null, gridY: null);
       }
 
-      // Place exactly the same number of items as were on-board; leave empty cells empty
+      // Place exactly the same number of items as were on-board
       final placeCount = onBoard.length.clamp(0, maxCells);
       for (int i = 0; i < placeCount; i++) {
         final pos = positions[i];
@@ -760,9 +760,11 @@ class GameService extends ChangeNotifier {
         _gridItems[idx] = _gridItems[idx].copyWith(gridX: pos['x'], gridY: pos['y']);
       }
 
+      // Do NOT spawn new items; leave empty cells empty as per spec
+
       await _saveState();
       notifyListeners();
-      debugPrint('Board shuffled using ability. Items moved: $placeCount. No new items added.');
+      debugPrint('Board shuffled using ability. Items moved: $placeCount.');
       return true;
     } catch (e) {
       debugPrint('Shuffle ability failed: $e');

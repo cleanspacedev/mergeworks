@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:confetti/confetti.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/models/game_item.dart';
@@ -14,6 +15,7 @@ import 'package:mergeworks/widgets/grid_item_widget.dart';
 import 'package:mergeworks/widgets/tutorial_overlay.dart';
 import 'package:mergeworks/widgets/particle_field.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/services/haptics_service.dart';
 
 class GameBoardScreen extends StatefulWidget {
@@ -46,6 +48,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   List<_SpawnGhost> _spawnGhosts = [];
   Offset? _spawnOrigin;
 
+  // Celebration pulse state
+  AnimationController? _pulseController;
+  Offset? _pulseCenter;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +62,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   void dispose() {
     _mergeController?.dispose();
     _spawnController?.dispose();
+    _pulseController?.dispose();
     _confettiController.dispose();
     super.dispose();
   }
@@ -325,11 +332,21 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         _invalidMergeAttempts = 0; // reset on successful merge
       });
 
-      audioService.playMergeSound();
-      _confettiController.play();
-      // Emit local particle burst at target
-      if (_targetCenter != null) {
-        _particleKey.currentState?.burst(_targetCenter!, count: 42);
+      // Tuned SFX and celebrations
+      final reducedMotion = context.read<AccessibilityService>().reducedMotion;
+      unawaited(audioService.playMergeSoundTuned(tier: newItem.tier, selectionCount: itemsToMerge.length));
+      if (!reducedMotion) {
+        _confettiController.play();
+      }
+      // Emit local particle burst at target (scaled by tier, reduced for low-motion)
+      final center = _targetCenter;
+      if (center != null) {
+        final int base = reducedMotion ? 10 : 24;
+        final int perTier = reducedMotion ? 2 : 6;
+        final int count = (base + newItem.tier * perTier).clamp(10, 160);
+        _particleKey.currentState?.burst(center, count: count);
+        _triggerScreenPulse(center: center, tier: newItem.tier, reducedMotion: reducedMotion);
+        _showComboBanner(tier: newItem.tier, selectionCount: itemsToMerge.length);
       }
       _showMessage('Merged into ${newItem.name}! 🎉');
 
@@ -541,6 +558,21 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                             for (int i = 0; i < _spawnGhosts.length; i++)
                               LayoutId(id: i, child: _SpawnEmoji(emoji: _spawnGhosts[i].emoji, progress: t)),
                           ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              // Subtle screen pulse overlay
+              if (_pulseController != null && _pulseCenter != null)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _pulseController!,
+                      builder: (context, _) {
+                        return CustomPaint(
+                          painter: _PulsePainter(center: _pulseCenter!, progress: _pulseController!.value, color: Theme.of(context).colorScheme.primary),
+                          size: Size.infinite,
                         );
                       },
                     ),
@@ -1188,6 +1220,79 @@ extension on _GameBoardScreenState {
       _refresh();
     }
   }
+
+  void _triggerScreenPulse({required Offset center, required int tier, required bool reducedMotion}) {
+    try {
+      _pulseController?.dispose();
+      final duration = reducedMotion ? const Duration(milliseconds: 220) : const Duration(milliseconds: 360);
+      _pulseController = AnimationController(vsync: this, duration: duration)..addStatusListener((status) {
+          if (status == AnimationStatus.completed) {
+            _pulseController?.dispose();
+            _pulseController = null;
+            _pulseCenter = null;
+            _refresh();
+          }
+        });
+      _pulseCenter = center;
+      _refresh();
+      _pulseController?.forward();
+    } catch (e) {
+      debugPrint('Pulse start failed: $e');
+    }
+  }
+
+  void _showComboBanner({required int tier, required int selectionCount}) {
+    try {
+      // Remove any existing popup to avoid stacking banners
+      final overlay = Overlay.of(context);
+      final cs = Theme.of(context).colorScheme;
+      final Color bg = cs.primaryContainer.withValues(alpha: 0.95);
+      final Color onBg = cs.onPrimaryContainer;
+      final entryController = AnimationController(vsync: this, duration: const Duration(milliseconds: 260), reverseDuration: const Duration(milliseconds: 160));
+      final curve = CurvedAnimation(parent: entryController, curve: Curves.easeOutCubic, reverseCurve: Curves.easeIn);
+      final entry = OverlayEntry(builder: (ctx) {
+        return Positioned(
+          top: 20,
+          left: 0,
+          right: 0,
+          child: IgnorePointer(
+            ignoring: true,
+            child: AnimatedBuilder(
+              animation: curve,
+              builder: (_, __) {
+                final t = curve.value;
+                return Opacity(
+                  opacity: t,
+                  child: Transform.translate(
+                    offset: Offset(0, (-20 * (1 - t)).clamp(0, 20)),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.auto_awesome, color: onBg, size: 18),
+                          const SizedBox(width: 8),
+                          Text('Tier $tier merge • $selectionCount', style: context.textStyles.titleSmall?.bold.withColor(onBg)),
+                        ]),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      });
+      overlay.insert(entry);
+      entryController.forward();
+      Future.delayed(const Duration(milliseconds: 1100), () async {
+        try { await entryController.reverse(); } catch (_) {}
+        finally { entry.remove(); entryController.dispose(); }
+      });
+    } catch (e) {
+      debugPrint('Combo banner failed: $e');
+    }
+  }
 }
 
 // ===================== UI: Ability Button =====================
@@ -1276,4 +1381,28 @@ class _AbilityButton extends StatelessWidget {
     final luminance = bg.computeLuminance();
     return luminance > 0.5 ? Colors.black : Colors.white;
   }
+}
+
+class _PulsePainter extends CustomPainter {
+  _PulsePainter({required this.center, required this.progress, required this.color});
+  final Offset center;
+  final double progress; // 0..1
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+    // Expand radius to cover screen diagonally
+    final maxRadius = math.sqrt(size.width * size.width + size.height * size.height) / 2;
+    final radius = (maxRadius * progress).clamp(0.0, maxRadius);
+    final paint = Paint()
+      ..shader = RadialGradient(
+        colors: [color.withValues(alpha: 0.18 * (1 - progress)), color.withValues(alpha: 0.0)],
+        stops: const [0.0, 1.0],
+      ).createShader(Rect.fromCircle(center: center, radius: radius));
+    canvas.drawCircle(center, radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _PulsePainter oldDelegate) => oldDelegate.progress != progress || oldDelegate.center != center || oldDelegate.color != color;
 }
