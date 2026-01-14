@@ -25,7 +25,7 @@ class AudioService extends ChangeNotifier {
         final ctx = AudioContext(
           iOS: AudioContextIOS(
             category: AVAudioSessionCategory.playback,
-            options: {AVAudioSessionOptions.mixWithOthers},
+            options: {AVAudioSessionOptions.mixWithOthers, AVAudioSessionOptions.defaultToSpeaker},
           ),
           android: AudioContextAndroid(
             usageType: AndroidUsageType.game,
@@ -117,7 +117,7 @@ class AudioService extends ChangeNotifier {
       if (kIsWeb) return; // Defer music start on web until explicit user action
       await _musicPlayer.stop();
       await _musicPlayer.setReleaseMode(ReleaseMode.loop);
-      await _musicPlayer.setSource(AssetSource('assets/audio/Music/bgmusic.wav'));
+      await _musicPlayer.setSource(AssetSource('audio/Music/bgmusic.wav'));
       await _musicPlayer.setVolume(_musicVolume);
       await _musicPlayer.resume();
       debugPrint('MUSIC: Background music started');
@@ -159,29 +159,29 @@ class AudioService extends ChangeNotifier {
   // ========== Public SFX API ==========
   Future<void> playMergeSound() async {
     if (!_soundEnabled) return;
-    final variants = ['assets/audio/FX/merge1.wav', 'assets/audio/FX/merge2.wav', 'assets/audio/FX/merge3.wav'];
+    final variants = ['audio/FX/merge1.wav', 'audio/FX/merge2.wav', 'audio/FX/merge3.wav'];
     final pick = variants[_rand.nextInt(variants.length)];
     await _playSfx(pick, volume: 0.9, caption: 'Merge');
   }
 
   Future<void> playSuccessSound() async {
-    await _playSfx('assets/audio/FX/boughtfromshop.wav', caption: 'Purchase successful');
+    await _playSfx('audio/FX/boughtfromshop.wav', caption: 'Purchase successful');
   }
 
   Future<void> playClickSound() async {
-    await _playSfx('assets/audio/FX/selectitem.wav', volume: 0.6, caption: 'Item selected');
+    await _playSfx('audio/FX/selectitem.wav', volume: 0.6, caption: 'Item selected');
   }
 
   Future<void> playAbilityUseSound() async {
-    await _playSfx('assets/audio/FX/abilityuse.wav', caption: 'Ability used');
+    await _playSfx('audio/FX/abilityuse.wav', caption: 'Ability used');
   }
 
   Future<void> playBombSound() async {
-    await _playSfx('assets/audio/FX/bomb.wav', caption: 'Bomb activated');
+    await _playSfx('audio/FX/bomb.wav', caption: 'Bomb activated');
   }
 
   Future<void> playLevelUp() async {
-    await _playSfx('assets/audio/FX/levelUp.wav', caption: 'Level up');
+    await _playSfx('audio/FX/levelUp.wav', caption: 'Level up');
   }
 
   Future<void> _maybeAnnounce(String text) async {

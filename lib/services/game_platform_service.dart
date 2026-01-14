@@ -17,6 +17,8 @@ class GamePlatformService extends ChangeNotifier {
       return;
     }
     try {
+      // Small delay to let Game Center bootstrap on app start
+      await Future.delayed(const Duration(milliseconds: 300));
       await GamesServices.signIn();
       _signedIn = true;
       debugPrint('GamesServices: signed in');
@@ -28,11 +30,27 @@ class GamePlatformService extends ChangeNotifier {
     }
   }
 
+  Future<void> _ensureSignedIn() async {
+    if (!isAvailable) return;
+    if (_signedIn) return;
+    try {
+      await GamesServices.signIn();
+      _signedIn = true;
+      debugPrint('GamesServices: re-signed in on demand');
+    } catch (e) {
+      _signedIn = false;
+      debugPrint('GamesServices on-demand sign-in failed: $e');
+    } finally {
+      notifyListeners();
+    }
+  }
+
   Future<void> showLeaderboards() async {
     if (!isAvailable) {
       debugPrint('Show leaderboards skipped: unsupported platform');
       return;
     }
+    await _ensureSignedIn();
     try {
       await GamesServices.showLeaderboards();
     } catch (e) {
@@ -45,6 +63,7 @@ class GamePlatformService extends ChangeNotifier {
       debugPrint('Show achievements skipped: unsupported platform');
       return;
     }
+    await _ensureSignedIn();
     try {
       await GamesServices.showAchievements();
     } catch (e) {
@@ -57,7 +76,16 @@ class GamePlatformService extends ChangeNotifier {
       // Avoid throwing on web where the plugin isn't registered.
       return;
     }
+    // Ensure we are signed in before attempting to send any scores
+    await _ensureSignedIn();
+    if (!_signedIn) {
+      debugPrint('Submit scores skipped: Game Center/Play Games not signed in');
+      return;
+    }
+    // Give the platform a brief moment after sign-in on iOS
+    await Future.delayed(const Duration(milliseconds: 200));
     try {
+      debugPrint('Submitting score Total Merges -> ${GamePlatformIds.leaderboardTotalMerges}: $totalMerges');
       await GamesServices.submitScore(
         score: Score(
           androidLeaderboardID: GamePlatformIds.leaderboardTotalMerges,
@@ -69,6 +97,7 @@ class GamePlatformService extends ChangeNotifier {
       debugPrint('Submit score (Total Merges) failed: $e');
     }
     try {
+      debugPrint('Submitting score Highest Tier -> ${GamePlatformIds.leaderboardHighestTier}: $highestTier');
       await GamesServices.submitScore(
         score: Score(
           androidLeaderboardID: GamePlatformIds.leaderboardHighestTier,
@@ -80,6 +109,7 @@ class GamePlatformService extends ChangeNotifier {
       debugPrint('Submit score (Highest Tier) failed: $e');
     }
     try {
+      debugPrint('Submitting score Player Level -> ${GamePlatformIds.leaderboardPlayerLevel}: $level');
       await GamesServices.submitScore(
         score: Score(
           androidLeaderboardID: GamePlatformIds.leaderboardPlayerLevel,

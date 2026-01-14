@@ -87,6 +87,20 @@ class SettingsScreen extends StatelessWidget {
                 ),
               );
             }),
+            const SizedBox(height: AppSpacing.sm),
+            Builder(builder: (context) {
+              final platform = context.watch<GamePlatformService>();
+              if (!platform.isAvailable || platform.signedIn) return const SizedBox.shrink();
+              return SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => context.read<GamePlatformService>().initialize(),
+                  style: FilledButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                  icon: const Icon(Icons.videogame_asset),
+                  label: const Text('Sign in to Game Center'),
+                ),
+              );
+            }),
             const SizedBox(height: AppSpacing.lg),
 
             _buildSection(

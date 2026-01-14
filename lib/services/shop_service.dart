@@ -29,16 +29,20 @@ class ShopService extends ChangeNotifier {
     // In Dreamflow preview (web), native IAP is unavailable; we simulate.
     if (kIsWeb) {
       _iapAvailable = false;
+      debugPrint('IAP: running on web, using simulation mode');
       notifyListeners();
       return;
     }
     try {
       _iapAvailable = await _iap.isAvailable();
+      debugPrint('IAP: isAvailable() -> $_iapAvailable');
       if (_iapAvailable) {
         await _loadProducts();
         _purchaseSub ??= _iap.purchaseStream.listen(_onPurchaseUpdates, onError: (e) {
           debugPrint('IAP purchase stream error: $e');
         });
+      } else {
+        debugPrint('IAP: Store not available (device not signed to App Store/Play or capability missing)');
       }
     } catch (e) {
       debugPrint('IAP initialize failed: $e');
@@ -51,16 +55,20 @@ class ShopService extends ChangeNotifier {
   Future<void> _loadProducts() async {
     try {
       final ids = _storeIds.values.toSet();
+      debugPrint('IAP: querying product details for: ' + ids.join(', '));
       final response = await _iap.queryProductDetails(ids);
       if (response.error != null) {
         debugPrint('IAP query error: ${response.error}');
       }
       _productDetailsByItemId.clear();
       final byId = {for (final p in response.productDetails) p.id: p};
+      debugPrint('IAP: received ${response.productDetails.length} products: ' + byId.keys.join(', '));
       for (final entry in _storeIds.entries) {
         final pd = byId[entry.value];
         if (pd != null) {
           _productDetailsByItemId[entry.key] = pd;
+        } else {
+          debugPrint('IAP: missing product for itemId=${entry.key} storeId=${entry.value}');
         }
       }
       // Update listeners so the UI can enable/disable purchase buttons accordingly

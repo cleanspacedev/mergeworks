@@ -34,6 +34,15 @@ class ShopScreen extends StatelessWidget {
           return ListView(
             padding: AppSpacing.paddingMd,
             children: [
+              if (!shopService.iapAvailable)
+                Card(
+                  margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                  child: ListTile(
+                    leading: Icon(Icons.info_outline, color: Theme.of(context).colorScheme.primary),
+                    title: const Text('In‑app purchases unavailable'),
+                    subtitle: const Text('Sign in to the App Store, enable In‑App Purchases capability, and ensure product IDs exist and are approved.'),
+                  ),
+                ),
               _buildSection(
                 context,
                 'Energy Refills ⚡',
