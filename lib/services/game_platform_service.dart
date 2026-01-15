@@ -9,6 +9,10 @@ class GamePlatformService extends ChangeNotifier {
   // Only Android/iOS are supported; web should no-op.
   bool get isAvailable => !kIsWeb && (defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.iOS);
 
+  // Throttle repeated sign-in attempts to avoid noisy PlatformExceptions when user/capability is unavailable.
+  DateTime? _lastSignInAttemptAt;
+  static const Duration _signInRetryCooldown = Duration(minutes: 5);
+
   Future<void> initialize() async {
     if (!isAvailable) {
       _signedIn = false;
@@ -19,12 +23,13 @@ class GamePlatformService extends ChangeNotifier {
     try {
       // Small delay to let Game Center bootstrap on app start
       await Future.delayed(const Duration(milliseconds: 300));
+      _lastSignInAttemptAt = DateTime.now();
       await GamesServices.signIn();
       _signedIn = true;
       debugPrint('GamesServices: signed in');
     } catch (e) {
       _signedIn = false;
-      debugPrint('GamesServices sign-in failed: $e');
+      debugPrint('GamesServices sign-in failed (startup): $e');
     } finally {
       notifyListeners();
     }
@@ -33,13 +38,22 @@ class GamePlatformService extends ChangeNotifier {
   Future<void> _ensureSignedIn() async {
     if (!isAvailable) return;
     if (_signedIn) return;
+
+    // Respect cooldown after a failed attempt to prevent repeated failures.
+    final now = DateTime.now();
+    if (_lastSignInAttemptAt != null && now.difference(_lastSignInAttemptAt!) < _signInRetryCooldown) {
+      debugPrint('GamesServices: sign-in throttled; will retry after cooldown');
+      return;
+    }
+
     try {
+      _lastSignInAttemptAt = now;
       await GamesServices.signIn();
       _signedIn = true;
       debugPrint('GamesServices: re-signed in on demand');
     } catch (e) {
       _signedIn = false;
-      debugPrint('GamesServices on-demand sign-in failed: $e');
+      debugPrint('GamesServices on-demand sign-in failed (cooldown ${_signInRetryCooldown.inMinutes}m): $e');
     } finally {
       notifyListeners();
     }

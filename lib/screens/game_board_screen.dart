@@ -465,17 +465,16 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
       Future.delayed(duration, () async {
         try {
-          if (!mounted) {
-            entry.remove();
-            controller.dispose();
-            return;
+          if (mounted) {
+            await controller.reverse();
           }
-          await controller.reverse();
         } catch (_) {}
         finally {
-          entry.remove();
+          if (entry.mounted) {
+            try { entry.remove(); } catch (_) {}
+          }
           _activeCenterPopup = null;
-          controller.dispose();
+          try { controller.dispose(); } catch (_) {}
         }
       });
     } catch (e) {

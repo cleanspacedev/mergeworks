@@ -43,6 +43,15 @@ class ShopScreen extends StatelessWidget {
                     subtitle: const Text('Sign in to the App Store, enable In‑App Purchases capability, and ensure product IDs exist and are approved.'),
                   ),
                 ),
+              if (shopService.iapAvailable && !shopService.hasAnyStoreProducts)
+                Card(
+                  margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                  child: ListTile(
+                    leading: Icon(Icons.shopping_bag_outlined, color: Theme.of(context).colorScheme.primary),
+                    title: const Text('Products not found yet'),
+                    subtitle: const Text('On iOS this usually means one of: not using a Sandbox tester, IAPs not Approved/attached to a submitted app version, Paid Apps agreement not active, bundle ID mismatch, or store propagation delay (up to 24h).'),
+                  ),
+                ),
               _buildSection(
                 context,
                 'Energy Refills ⚡',

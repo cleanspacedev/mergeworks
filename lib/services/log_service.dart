@@ -16,7 +16,6 @@ class LogService extends ChangeNotifier {
     final entry = '$ts | $line';
     _buffer.add(entry);
     if (_buffer.length > capacity) {
-      // Trim oldest entries to maintain capacity
       _buffer.removeRange(0, _buffer.length - capacity);
     }
     notifyListeners();
@@ -29,16 +28,15 @@ class LogService extends ChangeNotifier {
     return List<String>.from(_buffer.sublist(_buffer.length - n));
   }
 
-  /// Sets up global hooks to capture print, debugPrint, and FlutterError.
-  /// Call this at app startup within a zoned environment.
+  static bool _hooked = false;
+
+  /// Sets up global hooks to capture print and FlutterError. Safe to call once.
   static void hookGlobalLogging() {
+    if (_hooked) return;
+    _hooked = true;
     final log = LogService.instance;
 
-    // Capture debugPrint
-    debugPrint = (String? message, {int? wrapWidth}) {
-      if (message != null) log.add(message);
-      debugPrintSynchronously(message, wrapWidth: wrapWidth);
-    };
+    // Do NOT override debugPrint here to avoid double-capturing (debugPrint -> print).
 
     // Capture Flutter framework errors
     final prevOnError = FlutterError.onError;
@@ -47,7 +45,6 @@ class LogService extends ChangeNotifier {
       if (details.stack != null) {
         log.add(details.stack.toString());
       }
-      // Forward to previous handler/console
       if (prevOnError != null) {
         prevOnError(details);
       } else {

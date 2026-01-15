@@ -24,6 +24,7 @@ class ShopService extends ChangeNotifier {
   bool get isSimulated => kIsWeb || !_iapAvailable;
   StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
   final Map<String, ProductDetails> _productDetailsByItemId = {};
+  bool get hasAnyStoreProducts => _productDetailsByItemId.isNotEmpty;
 
   Future<void> initialize() async {
     // In Dreamflow preview (web), native IAP is unavailable; we simulate.
