@@ -1,4 +1,5 @@
-import 'package:flutter/foundation.dart';
+ import 'package:flutter/foundation.dart';
+ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/models/player_stats.dart';
@@ -180,28 +181,38 @@ class GameService extends ChangeNotifier {
       
       // Load player stats from Firestore
       final statsDoc = await _firebaseService!.firestore
-          .collection('player_stats')
-          .doc(userId)
-          .get();
+              .collection('player_stats')
+              .doc(userId)
+              .get()
+              .timeout(const Duration(seconds: 6));
       
       if (statsDoc.exists) {
         _playerStats = PlayerStats.fromJson(statsDoc.data()!);
       } else {
         // Create new player stats
         _playerStats = PlayerStats(userId: userId);
-        await _savePlayerStats();
+        try {
+          await _savePlayerStats().timeout(const Duration(seconds: 5));
+        } on TimeoutException {
+          debugPrint('Save player stats timed out (init). Will retry later.');
+        } catch (e) {
+          debugPrint('Save player stats failed (init): $e');
+        }
       }
 
       // Load grid items from Firestore (user-scoped subcollection preferred)
       List<QueryDocumentSnapshot<Map<String, dynamic>>> itemDocs = [];
       try {
         final subColSnap = await _firebaseService!.firestore
-            .collection('player_stats')
-            .doc(userId)
-            .collection('grid_items')
-            .get();
+                .collection('player_stats')
+                .doc(userId)
+                .collection('grid_items')
+                .get()
+                .timeout(const Duration(seconds: 6));
         itemDocs = subColSnap.docs;
         debugPrint('Loaded ${itemDocs.length} grid items from subcollection.');
+      } on TimeoutException {
+        debugPrint('Timed out loading subcollection grid items');
       } catch (e) {
         debugPrint('Failed to load subcollection grid items: $e');
       }
@@ -210,13 +221,16 @@ class GameService extends ChangeNotifier {
       if (itemDocs.isEmpty) {
         try {
           final legacySnap = await _firebaseService!.firestore
-              .collection('grid_items')
-              .where('user_id', isEqualTo: userId)
-              .get();
+                  .collection('grid_items')
+                  .where('user_id', isEqualTo: userId)
+                  .get()
+                  .timeout(const Duration(seconds: 6));
           itemDocs = legacySnap.docs;
           if (itemDocs.isNotEmpty) {
             debugPrint('Loaded ${itemDocs.length} grid items from legacy top-level collection. Will migrate to subcollection on next save.');
           }
+        } on TimeoutException {
+          debugPrint('Timed out loading legacy grid items (top-level)');
         } catch (e) {
           debugPrint('Failed to load legacy grid items (top-level): $e');
         }
@@ -242,7 +256,13 @@ class GameService extends ChangeNotifier {
       }
       if (changed) {
         debugPrint('Detected duplicate item IDs on load. Regenerated unique IDs.');
-        await _saveState();
+        try {
+          await _saveState().timeout(const Duration(seconds: 5));
+        } on TimeoutException {
+          debugPrint('Save state timed out after ID fix. Will retry later.');
+        } catch (e) {
+          debugPrint('Save state failed after ID fix: $e');
+        }
       }
 
       if (_gridItems.isEmpty) {
@@ -266,7 +286,13 @@ class GameService extends ChangeNotifier {
       }
       if (discoveredChanged) {
         _playerStats = _playerStats.copyWith(discoveredItems: discovered.toList(), updatedAt: DateTime.now());
-        await _savePlayerStats();
+        try {
+          await _savePlayerStats().timeout(const Duration(seconds: 5));
+        } on TimeoutException {
+          debugPrint('Save player stats timed out (discoveries).');
+        } catch (e) {
+          debugPrint('Save player stats failed (discoveries): $e');
+        }
       }
 
       // Ensure the board feels lively: keep a minimum population that scales with level
@@ -284,6 +310,10 @@ class GameService extends ChangeNotifier {
       } catch (e) {
         debugPrint('Platform score submit on init failed: $e');
       }
+    } on TimeoutException catch (e) {
+      debugPrint('Initialization timed out: $e');
+      _initializeStarterItems();
+      _ensureTargetPopulation();
     } catch (e) {
       debugPrint('Failed to initialize game: $e');
       _initializeStarterItems();
@@ -959,8 +989,20 @@ class GameService extends ChangeNotifier {
   }
 
   Future<void> _saveState() async {
-    await _savePlayerStats();
-    await _saveGridItems();
+    try {
+      await _savePlayerStats().timeout(const Duration(seconds: 6));
+    } on TimeoutException {
+      debugPrint('Save player stats timed out (saveState)');
+    } catch (e) {
+      debugPrint('Save player stats failed (saveState): $e');
+    }
+    try {
+      await _saveGridItems().timeout(const Duration(seconds: 6));
+    } on TimeoutException {
+      debugPrint('Save grid items timed out (saveState)');
+    } catch (e) {
+      debugPrint('Save grid items failed (saveState): $e');
+    }
   }
   
   Future<void> _savePlayerStats() async {
