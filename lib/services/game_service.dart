@@ -9,6 +9,8 @@ import 'package:mergeworks/services/game_platform_config.dart';
 import 'dart:math';
 
 class GameService extends ChangeNotifier {
+  // Watchdog to guarantee we never stay stuck on loading (e.g., iOS networking stalls)
+  Timer? _initWatchdog;
   FirebaseService? _firebaseService;
   GamePlatformService? _platformService;
   // Unique ID generator sequence to avoid duplicate IDs when creating items rapidly
@@ -41,6 +43,20 @@ class GameService extends ChangeNotifier {
     final ox = originX ?? (gridSize ~/ 2);
     final oy = originY ?? (gridSize ~/ 2);
     _lastSpawnEvent = SpawnEvent(items: List<GameItem>.from(items), originX: ox, originY: oy);
+  }
+
+  /// Public emergency escape hatch: immediately proceed with local data if init is stuck
+  void forceLocalFallback() {
+    if (!_isLoading) return; // nothing to do
+    debugPrint('Init fallback requested by UI. Seeding local state and continuing.');
+    try {
+      _initWatchdog?.cancel();
+      _initWatchdog = null;
+    } catch (_) {}
+    _initializeStarterItems();
+    _ensureTargetPopulation();
+    _isLoading = false;
+    notifyListeners();
   }
   
   // Permanent collection progress: store discovered tiers as 'tier_<n>' keys in playerStats.discoveredItems
@@ -175,6 +191,18 @@ class GameService extends ChangeNotifier {
     
     _isLoading = true;
     notifyListeners();
+
+    // Start watchdog: if we haven't completed init in 12s, force local fallback
+    try {
+      _initWatchdog?.cancel();
+    } catch (_) {}
+    _initWatchdog = Timer(const Duration(seconds: 12), () {
+      debugPrint('Initialization watchdog fired after 12s. Forcing local fallback.');
+      _initializeStarterItems();
+      _ensureTargetPopulation();
+      _isLoading = false;
+      notifyListeners();
+    });
 
     try {
       final userId = _firebaseService!.userId!;
@@ -319,6 +347,10 @@ class GameService extends ChangeNotifier {
       _initializeStarterItems();
       _ensureTargetPopulation();
     } finally {
+      try {
+        _initWatchdog?.cancel();
+      } catch (_) {}
+      _initWatchdog = null;
       _isLoading = false;
       notifyListeners();
     }

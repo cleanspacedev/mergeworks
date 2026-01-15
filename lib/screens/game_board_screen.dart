@@ -495,8 +495,23 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
           }
         });
         if (gameService.isLoading) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text('Loading your game...', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () => context.read<GameService>().forceLocalFallback(),
+                    icon: Icon(Icons.wifi_off, color: Theme.of(context).colorScheme.primary),
+                    label: Text('Continue offline', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                  ),
+                ],
+              ),
+            ),
           );
         }
 
