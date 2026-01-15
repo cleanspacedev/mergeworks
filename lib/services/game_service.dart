@@ -24,6 +24,9 @@ class GameService extends ChangeNotifier {
   PlayerStats _playerStats = PlayerStats();
   List<GameItem> _gridItems = [];
   bool _isLoading = false;
+  // Init state guards to avoid re-entrancy and post-fallback re-init
+  bool _initInProgress = false;
+  bool _initFinalized = false; // set true after a successful remote init OR local fallback
 
   PlayerStats get playerStats => _playerStats;
   List<GameItem> get gridItems => _gridItems;
@@ -47,7 +50,8 @@ class GameService extends ChangeNotifier {
 
   /// Public emergency escape hatch: immediately proceed with local data if init is stuck
   void forceLocalFallback() {
-    if (!_isLoading) return; // nothing to do
+    if (_initFinalized) return; // already finalized, nothing to do
+    // Allow forcing fallback even if _isLoading was briefly toggled by async
     debugPrint('Init fallback requested by UI. Seeding local state and continuing.');
     try {
       _initWatchdog?.cancel();
@@ -55,6 +59,9 @@ class GameService extends ChangeNotifier {
     } catch (_) {}
     _initializeStarterItems();
     _ensureTargetPopulation();
+    // Mark initialization as finalized to prevent any later auth notifications from re-triggering init
+    _initInProgress = false;
+    _initFinalized = true;
     _isLoading = false;
     notifyListeners();
   }
@@ -84,7 +91,8 @@ class GameService extends ChangeNotifier {
   }
   
   void _onAuthStateChanged() {
-    if (_firebaseService!.isAuthenticated && !_isLoading) {
+    // Only initialize once per app session, and avoid re-entrancy
+    if (_firebaseService!.isAuthenticated && !_initFinalized && !_initInProgress) {
       initialize();
     }
   }
@@ -188,6 +196,15 @@ class GameService extends ChangeNotifier {
       debugPrint('Skipping GameService init: Firebase not ready');
       return;
     }
+    if (_initFinalized) {
+      debugPrint('GameService init skipped: already finalized.');
+      return;
+    }
+    if (_initInProgress) {
+      debugPrint('GameService init already in progress, skipping re-entry.');
+      return;
+    }
+    _initInProgress = true;
     
     _isLoading = true;
     notifyListeners();
@@ -200,6 +217,8 @@ class GameService extends ChangeNotifier {
       debugPrint('Initialization watchdog fired after 12s. Forcing local fallback.');
       _initializeStarterItems();
       _ensureTargetPopulation();
+      _initInProgress = false;
+      _initFinalized = true;
       _isLoading = false;
       notifyListeners();
     });
@@ -351,6 +370,8 @@ class GameService extends ChangeNotifier {
         _initWatchdog?.cancel();
       } catch (_) {}
       _initWatchdog = null;
+      _initInProgress = false;
+      _initFinalized = true;
       _isLoading = false;
       notifyListeners();
     }
