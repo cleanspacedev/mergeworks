@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/widgets/unique_item_glyph.dart';
 import 'package:provider/provider.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 
@@ -106,14 +107,11 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         if (a11y.reducedMotion)
-                          Text(widget.item.emoji, style: TextStyle(fontSize: size))
+                          UniqueItemGlyph(item: widget.item, size: size)
                         else
                           ScaleTransition(
                             scale: widget.isHighlighted ? _scaleAnimation : const AlwaysStoppedAnimation(1.0),
-                            child: Text(
-                              widget.item.emoji,
-                              style: TextStyle(fontSize: size),
-                            ),
+                            child: UniqueItemGlyph(item: widget.item, size: size),
                           ),
                         const SizedBox(height: 2),
                         Text(

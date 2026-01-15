@@ -32,24 +32,43 @@ class ParticleFieldState extends State<ParticleField> with SingleTickerProviderS
   }
 
   /// Emit a burst of particles at [origin] in the overlay's coordinate space.
-  void burst(Offset origin, {int count = 36}) {
+  void burst(Offset origin, {int count = 36, int variant = 0}) {
     if (!mounted) return;
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final colors = <Color>[
-      theme.colorScheme.primary,
-      theme.colorScheme.secondary,
-      theme.colorScheme.tertiary,
-      theme.colorScheme.onPrimary.withValues(alpha: 0.8),
+      cs.primary,
+      cs.secondary,
+      cs.tertiary,
+      cs.onPrimary.withValues(alpha: 0.8),
     ];
     final rand = math.Random();
+
+    // Variant presets: 0=balanced, 1=floaty, 2=punchy
+    final v = variant % 3;
+    double minSpeed, maxSpeed;
+    int minLife, maxLife;
+    double gravity, damping;
+    double minSize, maxSize;
+    switch (v) {
+      case 1: // floaty, longer life
+        minSpeed = 70; maxSpeed = 140; minLife = 900; maxLife = 1600; gravity = 120; damping = 0.985; minSize = 3.0; maxSize = 5.0;
+        break;
+      case 2: // punchy, heavier
+        minSpeed = 140; maxSpeed = 260; minLife = 500; maxLife = 1000; gravity = 320; damping = 0.97; minSize = 2.0; maxSize = 3.0;
+        break;
+      default: // balanced
+        minSpeed = 90; maxSpeed = 180; minLife = 600; maxLife = 1300; gravity = 220; damping = 0.98; minSize = 2.0; maxSize = 4.0;
+    }
+
     for (int i = 0; i < count; i++) {
       if (_particles.length >= _maxParticles) break;
       final angle = rand.nextDouble() * math.pi * 2;
-      final speed = 90 + rand.nextDouble() * 180; // px/s
+      final speed = minSpeed + rand.nextDouble() * (maxSpeed - minSpeed);
       final vx = math.cos(angle) * speed;
       final vy = math.sin(angle) * speed;
-      final life = 600 + rand.nextInt(700); // ms
-      final size = 2.0 + rand.nextDouble() * 4.0;
+      final life = minLife + rand.nextInt(maxLife - minLife + 1); // ms
+      final size = minSize + rand.nextDouble() * (maxSize - minSize);
       final color = colors[rand.nextInt(colors.length)];
       _particles.add(_Particle(
         position: origin,
@@ -60,6 +79,8 @@ class ParticleFieldState extends State<ParticleField> with SingleTickerProviderS
         color: color,
         rotation: rand.nextDouble() * math.pi,
         rotationSpeed: (rand.nextDouble() - 0.5) * 6,
+        gravity: gravity,
+        damping: damping,
       ));
     }
     if (!_ticker.isAnimating) _ticker.forward();
@@ -72,9 +93,6 @@ class ParticleFieldState extends State<ParticleField> with SingleTickerProviderS
     _lastTime = elapsed;
     if (dtMs <= 0) return;
 
-    final gravity = 220.0; // px/s^2 downward
-    final damping = 0.98; // velocity damping per frame
-
     for (int i = _particles.length - 1; i >= 0; i--) {
       final p = _particles[i];
       p.lifeMs -= dtMs;
@@ -83,8 +101,8 @@ class ParticleFieldState extends State<ParticleField> with SingleTickerProviderS
         continue;
       }
       final dt = dtMs / 1000.0;
-      // Integrate motion
-      p.velocity = Offset(p.velocity.dx * damping, p.velocity.dy * damping + gravity * dt);
+      // Integrate motion with per-particle physics
+      p.velocity = Offset(p.velocity.dx * p.damping, p.velocity.dy * p.damping + p.gravity * dt);
       p.position = Offset(p.position.dx + p.velocity.dx * dt, p.position.dy + p.velocity.dy * dt);
       p.rotation += p.rotationSpeed * dt;
     }
@@ -141,6 +159,8 @@ class _Particle {
     required this.color,
     required this.rotation,
     required this.rotationSpeed,
+    required this.gravity,
+    required this.damping,
   });
 
   Offset position;
@@ -151,4 +171,6 @@ class _Particle {
   Color color;
   double rotation;
   double rotationSpeed;
+  double gravity;
+  double damping;
 }

@@ -178,6 +178,17 @@ class AudioService extends ChangeNotifier {
     }
   }
 
+  // Deterministic base playback rate per tier to create a unique sound signature
+  double _rateForTier(int tier) {
+    final List<int> semitoneOffsets = [-1, 0, 1, 2, 3, 4, 2, 0]; // cycles every 8 tiers
+    final safeTier = tier <= 0 ? 1 : tier;
+    final idx = (safeTier - 1) % semitoneOffsets.length;
+    final semis = semitoneOffsets[idx];
+    final r = pow(2, semis / 12).toDouble();
+    final clamped = r.clamp(0.95, 1.2);
+    return clamped is double ? clamped : (clamped as num).toDouble();
+  }
+
   // ========== Public SFX API ==========
   Future<void> playMergeSound() async {
     if (!_soundEnabled) return;
@@ -188,13 +199,13 @@ class AudioService extends ChangeNotifier {
 
   Future<void> playMergeSoundTuned({required int tier, required int selectionCount}) async {
     if (!_soundEnabled) return;
-    // Subtle rate increase for higher tiers and larger merges; capped to avoid artifacts.
-    final double tierBoost = (tier.clamp(1, 50) - 1) * 0.02; // +2% per tier above 1
-    final double countBoost = (selectionCount.clamp(2, 8) - 3) * 0.015; // +1.5% per extra above 3
-    final double rate = (1.0 + tierBoost + countBoost).clamp(1.0, 1.25);
+    // Unique per-tier signature: deterministic variant + musical pitch mapping.
+    final baseRate = _rateForTier(tier);
+    final micro = ((selectionCount.clamp(2, 8) - 3) * 0.01).toDouble(); // tiny emphasis for larger merges
+    final double rate = (baseRate * (1.0 + micro)).clamp(0.95, 1.22);
     final variants = ['audio/FX/merge1.wav', 'audio/FX/merge2.wav', 'audio/FX/merge3.wav'];
-    final pick = variants[_rand.nextInt(variants.length)];
-    await _playSfx(pick, volume: 0.95, caption: 'Merge T$tier x$selectionCount', playbackRate: rate);
+    final pick = variants[((tier <= 0 ? 1 : tier) - 1) % variants.length];
+    await _playSfx(pick, volume: 0.95, caption: 'Merge Tier $tier', playbackRate: rate);
   }
 
   Future<void> playSuccessSound() async {

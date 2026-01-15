@@ -74,6 +74,103 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     setState(() {});
   }
 
+  // ===================== Confetti dynamic settings =====================
+  // These properties get updated right before playing confetti to reflect
+  // the current combo size so the effect feels progressively punchier.
+  double _confettiEmission = 0.05;
+  int _confettiParticles = 30;
+  double _confettiGravity = 0.2;
+  double _confettiDrag = 0.05;
+  double _confettiMinBlast = 3.0;
+  double _confettiMaxBlast = 8.0;
+  BlastDirectionality _confettiDir = BlastDirectionality.explosive;
+  List<Color>? _confettiColorsCache;
+  Path Function(Size size)? _confettiShape;
+
+  void _updateConfettiForMerge({required int selectionCount, required int tier}) {
+    try {
+      final cs = Theme.of(context).colorScheme;
+      // Stages based on how many items are merged at once
+      // 4-5: subtle, 6-7: medium (circles), 8+: big (stars)
+      if (selectionCount <= 5) {
+        _confettiEmission = 0.03;
+        _confettiParticles = 28;
+        _confettiGravity = 0.28;
+        _confettiDrag = 0.055;
+        _confettiMinBlast = 2.0;
+        _confettiMaxBlast = 6.0;
+        _confettiDir = BlastDirectionality.explosive;
+        _confettiShape = null; // default squares
+        _confettiColorsCache = [
+          cs.primary,
+          cs.secondary,
+          cs.tertiary,
+          cs.primaryContainer,
+        ];
+      } else if (selectionCount <= 7) {
+        _confettiEmission = 0.07;
+        _confettiParticles = 46;
+        _confettiGravity = 0.24;
+        _confettiDrag = 0.045;
+        _confettiMinBlast = 3.0;
+        _confettiMaxBlast = 10.0;
+        _confettiDir = BlastDirectionality.explosive;
+        _confettiShape = _circlePath;
+        _confettiColorsCache = [
+          cs.primary,
+          cs.secondary,
+          cs.tertiary,
+          cs.onSecondaryContainer,
+          cs.onPrimary,
+        ];
+      } else {
+        _confettiEmission = 0.12;
+        _confettiParticles = 72;
+        _confettiGravity = 0.22;
+        _confettiDrag = 0.04;
+        _confettiMinBlast = 4.0;
+        _confettiMaxBlast = 14.0;
+        _confettiDir = BlastDirectionality.explosive;
+        _confettiShape = _starPath;
+        _confettiColorsCache = [
+          cs.primary,
+          cs.secondary,
+          cs.tertiary,
+          cs.onPrimary,
+          cs.onTertiaryContainer,
+          cs.secondaryContainer,
+        ];
+      }
+      debugPrint('Confetti tuned: count=$_confettiParticles emission=$_confettiEmission shape=${_confettiShape == null ? 'square' : _confettiShape == _circlePath ? 'circle' : 'star'}');
+    } catch (e) {
+      debugPrint('Confetti tuning failed: $e');
+    }
+  }
+
+  Path _circlePath(Size size) {
+    final r = size.shortestSide / 2;
+    return Path()..addOval(Rect.fromCircle(center: Offset(r, r), radius: r));
+  }
+
+  Path _starPath(Size size) {
+    // 5-point star
+    final Path path = Path();
+    final double w = size.width, h = size.height;
+    final double cx = w / 2, cy = h / 2;
+    final double outerR = math.min(cx, cy);
+    final double innerR = outerR * 0.5;
+    for (int i = 0; i < 10; i++) {
+      final isEven = i % 2 == 0;
+      final r = isEven ? outerR : innerR;
+      final a = -math.pi / 2 + (i * math.pi / 5);
+      final x = cx + r * math.cos(a);
+      final y = cy + r * math.sin(a);
+      if (i == 0) path.moveTo(x, y); else path.lineTo(x, y);
+    }
+    path.close();
+    return path;
+  }
+
   void _onItemTap(GameItem item, GameService gameService) {
     // Ensure BG music can start on platforms that require a user gesture (e.g., Web)
     context.read<AudioService>().maybeStartMusicFromUserGesture();
@@ -308,6 +405,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     if (_selectedItem == null) return;
 
     final itemsToMerge = gameService.gridItems.where((item) => _highlightedItems.contains(item.id)).toList();
+    final selectionCount = itemsToMerge.length;
 
     if (gameService.playerStats.energy <= 0) {
       _showMessage('Not enough energy ⚡');
@@ -335,19 +433,26 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       // Tuned SFX and celebrations
       final reducedMotion = context.read<AccessibilityService>().reducedMotion;
       unawaited(audioService.playMergeSoundTuned(tier: newItem.tier, selectionCount: itemsToMerge.length));
-      if (!reducedMotion) {
-        _confettiController.play();
+      // Only trigger screen-wide effects for merges > 3, and vary style every +2 over 3
+      if (selectionCount > 3) {
+        if (!reducedMotion) {
+          _updateConfettiForMerge(selectionCount: selectionCount, tier: newItem.tier);
+          _confettiController.play();
+        }
+        // Emit local particle burst at target (scaled by tier, reduced for low-motion)
+        final center = _targetCenter;
+        if (center != null) {
+          final int base = reducedMotion ? 10 : 24;
+          final int perTier = reducedMotion ? 2 : 6;
+          final int count = (base + newItem.tier * perTier).clamp(10, 160);
+          // Variant groups: (4-5)->0, (6-7)->1, (8-9)->2, ...
+          final int variant = ((selectionCount - 4) ~/ 2).clamp(0, 1000);
+          debugPrint('Particle burst variant=$variant for selectionCount=$selectionCount');
+          _particleKey.currentState?.burst(center, count: count, variant: variant);
+          _triggerScreenPulse(center: center, tier: newItem.tier, reducedMotion: reducedMotion);
+        }
       }
-      // Emit local particle burst at target (scaled by tier, reduced for low-motion)
-      final center = _targetCenter;
-      if (center != null) {
-        final int base = reducedMotion ? 10 : 24;
-        final int perTier = reducedMotion ? 2 : 6;
-        final int count = (base + newItem.tier * perTier).clamp(10, 160);
-        _particleKey.currentState?.burst(center, count: count);
-        _triggerScreenPulse(center: center, tier: newItem.tier, reducedMotion: reducedMotion);
-        _showComboBanner(tier: newItem.tier, selectionCount: itemsToMerge.length);
-      }
+      _showComboBanner(tier: newItem.tier, selectionCount: itemsToMerge.length);
       _showMessage('Merged into ${newItem.name}! 🎉');
 
       // Level up ding
@@ -598,16 +703,21 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                 alignment: Alignment.topCenter,
                 child: ConfettiWidget(
                   confettiController: _confettiController,
-                  blastDirectionality: BlastDirectionality.explosive,
-                  particleDrag: 0.05,
-                  emissionFrequency: 0.05,
-                  numberOfParticles: 30,
-                  gravity: 0.2,
-                  colors: [
+                  blastDirectionality: _confettiDir,
+                  minBlastForce: _confettiMinBlast,
+                  maxBlastForce: _confettiMaxBlast,
+                  particleDrag: _confettiDrag,
+                  emissionFrequency: _confettiEmission,
+                  numberOfParticles: _confettiParticles,
+                  gravity: _confettiGravity,
+                  minimumSize: const Size(6, 6),
+                  maximumSize: const Size(14, 14),
+                  colors: _confettiColorsCache ?? [
                     Theme.of(context).colorScheme.primary,
                     Theme.of(context).colorScheme.secondary,
                     Theme.of(context).colorScheme.tertiary,
                   ],
+                  createParticlePath: _confettiShape,
                 ),
               ),
               if (showTutorial)

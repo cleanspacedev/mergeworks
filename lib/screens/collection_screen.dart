@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/models/game_item.dart';
+import 'package:mergeworks/widgets/unique_item_glyph.dart';
 
 class CollectionScreen extends StatelessWidget {
   const CollectionScreen({super.key});
@@ -91,11 +93,7 @@ class CollectionScreen extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final item = items[index];
                     return _CollectionCard(
-                      emoji: item.isDiscovered ? item.emoji : '🔒',
-                      name: item.isDiscovered ? item.name : '???',
-                      tier: item.tier,
-                      description: item.isDiscovered ? item.description : 'Not yet discovered',
-                      isDiscovered: item.isDiscovered,
+                      item: item,
                     );
                   },
                 ),
@@ -109,46 +107,32 @@ class CollectionScreen extends StatelessWidget {
 }
 
 class _CollectionCard extends StatelessWidget {
-  final String emoji;
-  final String name;
-  final int tier;
-  final String description;
-  final bool isDiscovered;
+  final GameItem item;
 
-  const _CollectionCard({
-    required this.emoji,
-    required this.name,
-    required this.tier,
-    required this.description,
-    required this.isDiscovered,
-  });
+  const _CollectionCard({required this.item});
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: isDiscovered 
+      color: item.isDiscovered 
           ? Theme.of(context).colorScheme.surface
           : Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: InkWell(
-        onTap: isDiscovered ? () => _showDetails(context) : null,
+        onTap: item.isDiscovered ? () => _showDetails(context) : null,
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Padding(
           padding: AppSpacing.paddingSm,
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                emoji,
-                style: TextStyle(
-                  fontSize: 48,
-                  color: isDiscovered ? null : Colors.grey,
-                ),
-              ),
+              item.isDiscovered
+                  ? UniqueItemGlyph(item: item, size: 48)
+                  : const Icon(Icons.lock, size: 44, color: Colors.grey),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                name,
+                item.isDiscovered ? item.name : '???',
                 style: context.textStyles.titleSmall?.bold.copyWith(
-                  color: isDiscovered 
+                  color: item.isDiscovered 
                       ? Theme.of(context).colorScheme.onSurface
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -157,7 +141,7 @@ class _CollectionCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
               Text(
-                'Tier $tier',
+                'Tier ${item.tier}',
                 style: context.textStyles.labelSmall?.copyWith(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
@@ -177,10 +161,10 @@ class _CollectionCard extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(emoji, style: const TextStyle(fontSize: 80)),
+            UniqueItemGlyph(item: item, size: 80),
             const SizedBox(height: AppSpacing.md),
             Text(
-              name,
+              item.name,
               style: context.textStyles.headlineMedium?.bold.copyWith(
                 color: Theme.of(context).colorScheme.primary,
               ),
@@ -193,7 +177,7 @@ class _CollectionCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(AppRadius.lg),
               ),
               child: Text(
-                'Tier $tier',
+                'Tier ${item.tier}',
                 style: context.textStyles.labelLarge?.bold.copyWith(
                   color: Theme.of(context).colorScheme.onSecondaryContainer,
                 ),
@@ -201,7 +185,7 @@ class _CollectionCard extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.md),
             Text(
-              description,
+              item.isDiscovered ? item.description : 'Not yet discovered',
               style: context.textStyles.bodyLarge?.copyWith(
                 color: Theme.of(context).colorScheme.onSurface,
               ),

@@ -385,7 +385,7 @@ class GameService extends ChangeNotifier {
       _createItem(1, 2, 2),
     ];
     // Add a handful of extra low tiers to make the board feel populated
-    _fillRandomLowTiers(count: 12, maxTier: 2);
+    _fillMatchingLowest(count: 12);
     _saveState();
   }
 
@@ -396,12 +396,24 @@ class GameService extends ChangeNotifier {
     final minCount = target.clamp(18, 32); // cap to avoid overcrowding a 6x6 grid
     final deficit = minCount - _gridItems.length;
     if (deficit > 0) {
-      _fillRandomLowTiers(count: deficit, maxTier: 2);
+      _fillMatchingLowest(count: deficit);
       _saveState();
     }
   }
 
-  List<GameItem> _fillRandomLowTiers({required int count, int maxTier = 2}) {
+  // Determine the lowest non-wildcard tier currently on the board; defaults to 1
+  int _lowestNonWildcardTierOnBoard() {
+    final tiers = _gridItems.where((i) => !i.isWildcard).map((i) => i.tier).toList();
+    if (tiers.isEmpty) return 1;
+    tiers.sort();
+    return tiers.first;
+  }
+
+  int _countOfTier(int tier) => _gridItems.where((i) => !i.isWildcard && i.tier == tier).length;
+
+  // Fill the board with items that MATCH the current lowest tier, and ensure
+  // there are always at least 3 of that tier on the board.
+  List<GameItem> _fillMatchingLowest({required int count}) {
     final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
     int added = 0;
     // Try to place near top-left scanning order but choose slots randomly for variety
@@ -413,13 +425,25 @@ class GameService extends ChangeNotifier {
     }
     allSlots.shuffle(_rand);
     final List<GameItem> created = [];
+    final targetTier = _lowestNonWildcardTierOnBoard();
+    // Ensure we will reach at least 3 of the lowest tier.
+    final existing = _countOfTier(targetTier);
+    final needForTriple = max(0, 3 - existing);
     for (final slot in allSlots) {
       if (added >= count) break;
-      final tier = (_rand.nextDouble() < 0.8) ? 1 : min(2, maxTier); // bias toward tier-1
-      final item = _createItem(tier, slot['x']!, slot['y']!);
+      final item = _createItem(targetTier, slot['x']!, slot['y']!);
       _gridItems.add(item);
       created.add(item);
       added++;
+    }
+
+    // If we still don't have a triple, and there are empty slots, top up to reach 3.
+    if (_countOfTier(targetTier) < 3) {
+      final shortBy = 3 - _countOfTier(targetTier);
+      if (shortBy > 0) {
+        // Recurse once with a bounded count to fill remaining
+        created.addAll(_fillMatchingLowest(count: shortBy));
+      }
     }
     return created;
   }
@@ -453,19 +477,25 @@ class GameService extends ChangeNotifier {
       int placed = 0;
       final List<GameItem> spawned = [];
 
+      final targetTier = _lowestNonWildcardTierOnBoard();
       for (final slot in local) {
         if (placed >= toAdd) break;
-        final tier = _rand.nextDouble() < 0.85 ? 1 : 2;
-        final it = _createItem(tier, slot['x']!, slot['y']!);
+        final it = _createItem(targetTier, slot['x']!, slot['y']!);
         _gridItems.add(it);
         spawned.add(it);
         placed++;
       }
 
       if (placed < toAdd) {
-        // Fallback: fill anywhere
-        final extra = _fillRandomLowTiers(count: toAdd - placed, maxTier: 2);
+        // Fallback: fill anywhere but matching lowest tier
+        final extra = _fillMatchingLowest(count: toAdd - placed);
         spawned.addAll(extra);
+      }
+
+      // Guarantee that there are at least 3 of the current lowest tier
+      final currentLowest = _lowestNonWildcardTierOnBoard();
+      if (_countOfTier(currentLowest) < 3) {
+        _fillMatchingLowest(count: 3 - _countOfTier(currentLowest));
       }
 
       if (spawned.isNotEmpty) {
@@ -1002,7 +1032,7 @@ class GameService extends ChangeNotifier {
 
     if (!_spendCoinsIfPossible(cost)) return false;
     try {
-      final created = _fillRandomLowTiers(count: count, maxTier: 2);
+    final created = _fillMatchingLowest(count: count);
       await _saveState();
       notifyListeners();
       debugPrint('Summoned $count low-tier items.');
