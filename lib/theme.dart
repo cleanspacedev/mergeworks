@@ -326,26 +326,43 @@ class AppLevelTheme {
   /// Colors are generated algorithmically; no assets required.
   static List<Color> gradientForLevel(BuildContext context, int level) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // Cycle hue across the spectrum per level.
-    // We keep a limited number of steps to make each level feel like a distinct “biome”.
-    final double hue = (level % 12) * (360 / 12); // 12-step color wheel
+    // Use a curated hue sequence so early levels feel dramatically different.
+    // This avoids the “everything is green-ish until L4” problem.
+    const hues = <double>[
+      120, // green
+      0, // red
+      210, // blue
+      285, // purple
+      35, // orange/gold
+      165, // teal
+      55, // yellow
+      320, // magenta
+      195, // cyan
+      15, // ember
+      250, // indigo
+      95, // lime
+    ];
+    final double hue = hues[(level - 1).abs() % hues.length];
 
     // Raw level colors (before blending with the app surface).
     // Tuned to be noticeably different between levels, especially in dark mode.
-    final double satTop = isDark ? 0.78 : 0.55;
-    final double lightTop = isDark ? 0.26 : 0.92;
-    final double satBottom = isDark ? 0.88 : 0.45;
-    final double lightBottom = isDark ? 0.12 : 0.98;
+    // Make the gradient noticeably more "biome-like" by widening contrast.
+    final double satTop = isDark ? 0.88 : 0.70;
+    final double lightTop = isDark ? 0.30 : 0.94;
+    final double satBottom = isDark ? 0.92 : 0.60;
+    final double lightBottom = isDark ? 0.11 : 0.985;
 
     final topRaw = HSLColor.fromAHSL(1, hue, satTop, lightTop).toColor();
-    final bottomRaw = HSLColor.fromAHSL(1, (hue + 22) % 360, satBottom, lightBottom).toColor();
+    final bottomRaw = HSLColor.fromAHSL(1, (hue + 28) % 360, satBottom, lightBottom).toColor();
 
     // Blend with surface for visual consistency.
     // NOTE: This previously used a manual blend with incorrect channel math,
     // which effectively “flattened” the gradient and made levels look the same.
     final surface = Theme.of(context).colorScheme.surface;
-    final top = Color.lerp(topRaw, surface, isDark ? 0.14 : 0.10)!;
-    final bottom = Color.lerp(bottomRaw, surface, isDark ? 0.06 : 0.04)!;
+    // Blend slightly with surface so text/cards still feel cohesive, but keep
+    // enough saturation for a dramatic background change.
+    final top = Color.lerp(topRaw, surface, isDark ? 0.08 : 0.06)!;
+    final bottom = Color.lerp(bottomRaw, surface, isDark ? 0.03 : 0.02)!;
 
     return [top, bottom];
   }

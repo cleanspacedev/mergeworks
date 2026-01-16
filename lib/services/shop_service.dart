@@ -229,6 +229,18 @@ class ShopService extends ChangeNotifier {
 
   List<ShopItem> get items => _items;
 
+  /// Returns the cheapest real-money gem pack (by configured [ShopItem.price]).
+  ///
+  /// Note: This is based on our internal catalog price and is only used for UI
+  /// suggestions (e.g., upsell sheets). The store-provided localized price label
+  /// should be fetched via [priceLabelFor] where available.
+  ShopItem? cheapestGemPack() {
+    final gemPacks = _items.where((i) => i.type == ShopItemType.gems && i.price > 0).toList();
+    if (gemPacks.isEmpty) return null;
+    gemPacks.sort((a, b) => a.price.compareTo(b.price));
+    return gemPacks.first;
+  }
+
   Future<bool> purchase(String itemId) async {
     // Simulate in web/when store is not available
     if (isSimulated) {

@@ -14,19 +14,13 @@ class LevelScreen extends StatelessWidget {
     final level = game.currentLevel;
     final discovered = game.discoveredTierCount;
 
-    // Compute triangular-level thresholds matching GameService logic
-    int cumulative = 1; // tiers needed to be at current level
-    int increment = 2; // tiers needed to reach the next level from level 1
-    for (int l = 1; l < level; l++) {
-      cumulative += increment;
-      increment += 1;
-    }
-    final startOfLevel = cumulative; // inclusive
-    final nextLevelThreshold = cumulative + increment; // exclusive upper bound
-    final span = (nextLevelThreshold - startOfLevel).clamp(1, 1 << 30);
+    // Thresholds are defined in GameService so progression logic stays in sync.
+    final startOfLevel = (level <= 1) ? 1 : (GameService.tierThresholdForLevel(level - 1) + 1); // inclusive
+    final nextLevelRequired = GameService.tierThresholdForLevel(level) + 1; // first tier count that becomes next level
+    final span = (nextLevelRequired - startOfLevel).clamp(1, 1 << 30);
     final current = (discovered - startOfLevel).clamp(0, span);
     final progress = (current / span).clamp(0.0, 1.0);
-    final remaining = (nextLevelThreshold - discovered).clamp(0, 1 << 30);
+    final remaining = (nextLevelRequired - discovered).clamp(0, 1 << 30);
 
     final colors = AppLevelTheme.gradientForLevel(context, level);
 
@@ -58,7 +52,7 @@ class LevelScreen extends StatelessWidget {
                       totalSteps: span,
                       remaining: remaining,
                       discovered: discovered,
-                      nextLevelThreshold: nextLevelThreshold,
+                      nextLevelThreshold: nextLevelRequired,
                     ),
                     const Spacer(),
                     FilledButton.icon(

@@ -188,29 +188,60 @@ class GameService extends ChangeNotifier {
   static final List<int> _levelTierCounts = [18, 10, 10, 10, 10, 10]; // extendable
   static late final Map<int, Map<String, dynamic>> _itemTemplates = _buildTemplates();
   static int get totalTiers => _itemTemplates.length;
-  static int _levelForTier(int count) {
-    // Fast early, slower later: reach new levels quickly at first, then
-    // per-level requirements increase by +1 each level (triangular growth).
-    // Examples (cumulative discovered unique tiers -> level):
-    // 1 -> L1, 3 -> L2, 6 -> L3, 10 -> L4, 15 -> L5, 21 -> L6, ...
-    if (count <= 1) return 1;
+
+  // ---------------------------------------------------------------------------
+  // LEVEL PROGRESSION
+  // ---------------------------------------------------------------------------
+  // The player's level is derived from collection progress (unique tiers
+  // discovered). Early levels should be reachable quickly.
+  //
+  // We intentionally make Level 4 more reachable than the older triangular curve
+  // (which required 10 unique tiers). New early thresholds:
+  //  L1: 1 tier
+  //  L2: 3 tiers
+  //  L3: 5 tiers
+  //  L4: 8 tiers
+  // After that we grow by (level-1) tiers each level:
+  //  L5: 12, L6: 17, L7: 23, ...
+  static const List<int> _earlyLevelMaxTierThresholds = [1, 3, 5, 8];
+
+  /// Returns the max discovered-tier count that still maps to [level].
+  ///
+  /// Example: if this returns 8 for level 4, then discovering 9 tiers moves you
+  /// to level 5.
+  static int tierThresholdForLevel(int level) {
+    if (level <= 1) return 1;
+    if (level <= _earlyLevelMaxTierThresholds.length) return _earlyLevelMaxTierThresholds[level - 1];
+    int threshold = _earlyLevelMaxTierThresholds.last;
+    for (int l = _earlyLevelMaxTierThresholds.length + 1; l <= level; l++) {
+      threshold += (l - 1);
+      if (threshold > 999999) break;
+    }
+    return threshold;
+  }
+
+  /// Returns the current level for a given number of discovered tiers.
+  static int levelForDiscoveredTiers(int discoveredTiers) {
+    final count = discoveredTiers <= 0 ? 1 : discoveredTiers;
+    // Find the first level whose threshold contains count.
     int level = 1;
-    int cumulative = 1; // tiers required to be at current level
-    int increment = 2;  // tiers needed to reach the next level initially
-    while (count > cumulative) {
-      cumulative += increment;
+    while (count > tierThresholdForLevel(level)) {
       level++;
-      // Make it progressively slower: increase requirement a little every level
-      increment += 1;
-      if (level > 999) break; // safety guard
+      if (level > 999) break;
     }
     return level;
   }
   // Link levels to collection progress: your level is determined by how many unique tiers
   // you have discovered in the collection book (not just the highest on-board tier)
   int get currentLevel {
-    final count = discoveredTierCount <= 0 ? 1 : discoveredTierCount;
-    return _levelForTier(count);
+    return levelForDiscoveredTiers(discoveredTierCount);
+  }
+
+  /// How many additional unique tiers are required to reach the next level.
+  int get tiersRemainingToNextLevel {
+    final nextRequired = tierThresholdForLevel(currentLevel) + 1;
+    final discovered = discoveredTierCount <= 0 ? 1 : discoveredTierCount;
+    return (nextRequired - discovered).clamp(0, 1 << 30);
   }
 
   static Map<int, Map<String, dynamic>> _buildTemplates() {
@@ -1357,6 +1388,38 @@ class GameService extends ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('Summon ability failed: $e');
+      return false;
+    }
+  }
+
+  /// Summons a burst of low-tier items, paid with gems.
+  ///
+  /// Used by the “No moves left” offer, where we want to upsell gem packs when
+  /// the player can’t afford the summon.
+  Future<bool> abilitySummonBurstWithGems({required int count, required int gemCost}) async {
+    // Guard: if the board is full, do not allow summoning
+    final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
+    int emptySlots = 0;
+    for (int y = 0; y < gridSize; y++) {
+      for (int x = 0; x < gridSize; x++) {
+        if (!occupied.contains('${x}_$y')) emptySlots++;
+      }
+    }
+    if (emptySlots == 0) {
+      debugPrint('Summon blocked: board is full (no empty slots).');
+      return false;
+    }
+
+    if (!_spendGemsIfPossible(gemCost)) return false;
+    try {
+      final created = _fillMatchingLowest(count: count);
+      await _saveState();
+      notifyListeners();
+      debugPrint('Summoned $count low-tier items (paid with gems).');
+      _recordSpawnEvent(created);
+      return true;
+    } catch (e) {
+      debugPrint('Summon (gems) ability failed: $e');
       return false;
     }
   }

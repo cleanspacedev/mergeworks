@@ -453,15 +453,18 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     return false;
   }
 
-  Future<bool?> _showNoMovesOfferSheet({required int summonCount, required int discountedCost, required int originalCost}) async {
+  Future<NoMovesOfferAction?> _showNoMovesOfferSheet({required int summonCount, required int discountedCost, required int originalCost}) async {
     if (!mounted || !_isOnGameBoardRoute()) return null;
     _isNoMovesSheetOpen = true;
     try {
       final gs = context.read<GameService>();
-      final coins = gs.playerStats.coins;
+      final gems = gs.playerStats.gems;
       final canSummon = _canSummonNow(gs);
-      final canAfford = coins >= discountedCost;
-      return await context.read<PopupManager>().showBottomSheet<bool>(
+      final canAfford = gems >= discountedCost;
+      final shop = context.read<ShopService>();
+      final cheapestGemPack = shop.cheapestGemPack();
+      final cheapestGemPriceLabel = cheapestGemPack == null ? null : (shop.priceLabelFor(cheapestGemPack.id) ?? '\$${cheapestGemPack.price.toStringAsFixed(2)}');
+       return await context.read<PopupManager>().showBottomSheet<NoMovesOfferAction>(
             context: context,
             isScrollControlled: true,
             useSafeArea: true,
@@ -470,9 +473,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
               summonCount: summonCount,
               discountedCost: discountedCost,
               originalCost: originalCost,
-              currentCoins: coins,
+              currentGems: gems,
               canSummon: canSummon,
               canAfford: canAfford,
+              cheapestGemPackLabel: cheapestGemPack?.name,
+              cheapestGemPackPriceLabel: cheapestGemPriceLabel,
             ),
           );
     } catch (e) {
@@ -588,19 +593,24 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         const originalCost = 80;
         const discountedCost = 40;
 
-        final shouldSummon = await _showNoMovesOfferSheet(summonCount: summonCount, discountedCost: discountedCost, originalCost: originalCost);
+        final action = await _showNoMovesOfferSheet(summonCount: summonCount, discountedCost: discountedCost, originalCost: originalCost);
         if (!mounted) return;
 
-        if (shouldSummon == true) {
+        if (action == NoMovesOfferAction.shop) {
+          context.push(AppRoutes.shop);
+          return;
+        }
+
+        if (action == NoMovesOfferAction.summon) {
           final audio = context.read<AudioService>();
           final haptics = context.read<HapticsService>();
           audio.playAbilityUseSound();
-          final ok = await gameService.abilitySummonBurst(count: summonCount, cost: discountedCost);
+          final ok = await gameService.abilitySummonBurstWithGems(count: summonCount, gemCost: discountedCost);
           if (ok) {
             haptics.onSummon();
             _showMessage('Summoned new items ✨');
           } else {
-            _showMessage('Couldn\'t summon (board full or not enough coins)');
+            _showMessage('Couldn\'t summon (board full or not enough gems)');
           }
         }
       } catch (e) {
@@ -1270,6 +1280,12 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   ),
                 ),
                 child: SafeArea(
+                  // The game UI needs top/side insets, but applying a bottom
+                  // SafeArea to the whole Column creates an empty “gap” under
+                  // the bottom controls (notably visible on iOS with the home
+                  // indicator). We instead handle the bottom inset inside the
+                  // bottom bar itself.
+                  bottom: false,
                   child: Column(
                     children: [
                       _buildTopBar(context, gameService),
@@ -1542,6 +1558,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   }
 
   Widget _buildBottomBar(BuildContext context, GameService gameService) {
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
     final canPowerMerge = _highlightedItems.length == 2 && _areTwoSameTier(gameService) && gameService.powerMergeCharges > 0;
     final canMergeNow = _highlightedItems.length >= 3 || canPowerMerge;
     final onBoardCount = gameService.gridItems.where((i) => i.gridX != null && i.gridY != null).length;
@@ -1557,7 +1574,12 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     final canWildcard = gameService.playerStats.wildcardOrbs > 0;
     final canTierUp = gameService.playerStats.tierUpTokens > 0 && hasSelection && !_selectedItem!.isWildcard && _selectedItem!.tier < GameService.totalTiers;
     return Container(
-      padding: AppSpacing.paddingMd,
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.md,
+        AppSpacing.md,
+        AppSpacing.md + bottomInset,
+      ),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         border: Border(

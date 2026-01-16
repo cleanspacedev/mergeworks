@@ -204,156 +204,178 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
             ],
           ),
         ),
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _canSpin ? 'Spin for Free Rewards!' : 'Come back tomorrow!',
-                style: context.textStyles.headlineMedium?.bold.copyWith(
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              AnimatedBuilder(
-                animation: _controller,
-                builder: (context, child) {
-                  const double wheelSize = 340;
-                  return Transform.rotate(
-                    angle: _controller.value * 2 * pi * 3,
-                    child: Container(
-                      width: wheelSize,
-                      height: wheelSize,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: LinearGradient(
-                          colors: [
-                            Theme.of(context).colorScheme.primary,
-                            Theme.of(context).colorScheme.secondary,
-                            Theme.of(context).colorScheme.tertiary,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wheelSize = min(340.0, max(240.0, constraints.maxWidth - 48));
+
+            return CustomScrollView(
+              slivers: [
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: AppSpacing.xl),
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              _canSpin ? 'Spin for Free Rewards!' : 'Come back tomorrow!',
+                              style: context.textStyles.headlineMedium?.bold.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: AppSpacing.xxl),
+                            AnimatedBuilder(
+                              animation: _controller,
+                              builder: (context, child) {
+                                return Transform.rotate(
+                                  angle: _controller.value * 2 * pi * 3,
+                                  child: Container(
+                                    width: wheelSize,
+                                    height: wheelSize,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          Theme.of(context).colorScheme.primary,
+                                          Theme.of(context).colorScheme.secondary,
+                                          Theme.of(context).colorScheme.tertiary,
+                                        ],
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
+                                          blurRadius: 20,
+                                          spreadRadius: 5,
+                                        ),
+                                      ],
+                                    ),
+                                    child: Stack(
+                                      children: List.generate(
+                                        _rewards.length,
+                                        (index) {
+                                          final angle = (2 * pi / _rewards.length) * index;
+                                          final radius = wheelSize * 0.34;
+                                          final center = wheelSize / 2;
+                                          final x = radius * cos(angle);
+                                          final y = radius * sin(angle);
+
+                                          return Positioned(
+                                            left: center + x - 28,
+                                            top: center + y - 28,
+                                            child: Container(
+                                              width: 56,
+                                              height: 56,
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context).colorScheme.surface,
+                                                shape: BoxShape.circle,
+                                              ),
+                                              child: Center(
+                                                child: Text(
+                                                  _rewards[index].icon,
+                                                  style: const TextStyle(fontSize: 28),
+                                                ),
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            const SizedBox(height: AppSpacing.xxl),
+                            if (_canSpin)
+                              FilledButton.icon(
+                                onPressed: _isSpinning ? null : () => _spin(),
+                                icon: _isSpinning
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : Icon(Icons.casino, color: Theme.of(context).colorScheme.onPrimary, size: 28),
+                                label: Text(
+                                  _isSpinning ? 'Spinning...' : 'Spin Now!',
+                                  style: context.textStyles.titleMedium?.bold.copyWith(color: Theme.of(context).colorScheme.onPrimary),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Theme.of(context).colorScheme.primary,
+                                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: 18),
+                                  shape: const StadiumBorder(),
+                                ),
+                              )
+                            else
+                              Column(
+                                children: [
+                                  Container(
+                                    padding: AppSpacing.paddingMd,
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(AppRadius.lg),
+                                    ),
+                                    child: Text(
+                                      '⏰ Next free spin in ${24 - DateTime.now().hour}h',
+                                      style: context.textStyles.titleSmall?.copyWith(
+                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: AppSpacing.md),
+                                  Consumer<GameService>(
+                                    builder: (context, game, _) {
+                                      final canAfford = game.playerStats.gems >= _extraSpinGemCost;
+                                      return FilledButton.icon(
+                                        onPressed: _isSpinning || !canAfford ? null : _buyExtraSpin,
+                                        icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
+                                        label: Text(
+                                          'Buy Extra Spin • 💎 $_extraSpinGemCost',
+                                          style: context.textStyles.titleSmall?.bold.copyWith(color: Theme.of(context).colorScheme.onPrimary),
+                                        ),
+                                        style: FilledButton.styleFrom(
+                                          backgroundColor:
+                                              canAfford ? Theme.of(context).colorScheme.secondary : Theme.of(context).colorScheme.surfaceContainerHigh,
+                                          foregroundColor: Theme.of(context).colorScheme.onSecondary,
+                                          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 14),
+                                          shape: const StadiumBorder(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            const SizedBox(height: AppSpacing.xl),
+                            Text(
+                              'Possible Rewards:',
+                              style: context.textStyles.titleSmall?.bold.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            Wrap(
+                              spacing: AppSpacing.sm,
+                              runSpacing: AppSpacing.sm,
+                              alignment: WrapAlignment.center,
+                              children: _rewards.map((reward) {
+                                return Chip(
+                                  avatar: Text(reward.icon),
+                                  label: Text(reward.name),
+                                );
+                              }).toList(),
+                            ),
                           ],
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.4),
-                            blurRadius: 20,
-                            spreadRadius: 5,
-                          ),
-                        ],
-                      ),
-                      child: Stack(
-                        children: List.generate(
-                          _rewards.length,
-                          (index) {
-                            final angle = (2 * pi / _rewards.length) * index;
-                            final radius = wheelSize * 0.34;
-                            final center = wheelSize / 2;
-                            final x = radius * cos(angle);
-                            final y = radius * sin(angle);
-
-                            return Positioned(
-                              left: center + x - 28,
-                              top: center + y - 28,
-                              child: Container(
-                                width: 56,
-                                height: 56,
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.surface,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Center(
-                                  child: Text(
-                                    _rewards[index].icon,
-                                    style: const TextStyle(fontSize: 28),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
                       ),
                     ),
-                  );
-                },
-              ),
-              const SizedBox(height: AppSpacing.xxl),
-              if (_canSpin)
-                FilledButton.icon(
-                  onPressed: _isSpinning ? null : () => _spin(),
-                  icon: _isSpinning 
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Icon(Icons.casino, color: Theme.of(context).colorScheme.onPrimary, size: 28),
-                  label: Text(_isSpinning ? 'Spinning...' : 'Spin Now!',
-                      style: context.textStyles.titleMedium?.bold.copyWith(color: Theme.of(context).colorScheme.onPrimary)),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: 18),
-                    shape: const StadiumBorder(),
                   ),
-                )
-              else
-                Column(
-                  children: [
-                    Container(
-                      padding: AppSpacing.paddingMd,
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(AppRadius.lg),
-                      ),
-                      child: Text(
-                        '⏰ Next free spin in ${24 - DateTime.now().hour}h',
-                        style: context.textStyles.titleSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Consumer<GameService>(
-                      builder: (context, game, _) {
-                        final canAfford = game.playerStats.gems >= _extraSpinGemCost;
-                        return FilledButton.icon(
-                          onPressed: _isSpinning || !canAfford ? null : _buyExtraSpin,
-                          icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
-                          label: Text('Buy Extra Spin • 💎 $_extraSpinGemCost',
-                              style: context.textStyles.titleSmall?.bold.copyWith(color: Theme.of(context).colorScheme.onPrimary)),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: canAfford ? Theme.of(context).colorScheme.secondary : Theme.of(context).colorScheme.surfaceContainerHigh,
-                            foregroundColor: Theme.of(context).colorScheme.onSecondary,
-                            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 14),
-                            shape: const StadiumBorder(),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
                 ),
-              const SizedBox(height: AppSpacing.xl),
-              Text(
-                'Possible Rewards:',
-                style: context.textStyles.titleSmall?.bold.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Wrap(
-                spacing: AppSpacing.sm,
-                runSpacing: AppSpacing.sm,
-                alignment: WrapAlignment.center,
-                children: _rewards.map((reward) {
-                  return Chip(
-                    avatar: Text(reward.icon),
-                    label: Text(reward.name),
-                  );
-                }).toList(),
-              ),
-            ],
-          ),
+              ],
+            );
+          },
         ),
       ),
     );

@@ -2,22 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/theme.dart';
 
+enum NoMovesOfferAction {
+  summon,
+  shop,
+  later,
+}
+
 class NoMovesOfferSheet extends StatelessWidget {
   final int summonCount;
   final int discountedCost;
   final int originalCost;
-  final int currentCoins;
+  final int currentGems;
   final bool canSummon;
   final bool canAfford;
+  final String? cheapestGemPackLabel;
+  final String? cheapestGemPackPriceLabel;
 
   const NoMovesOfferSheet({
     super.key,
     required this.summonCount,
     required this.discountedCost,
     required this.originalCost,
-    required this.currentCoins,
+    required this.currentGems,
     required this.canSummon,
     required this.canAfford,
+    this.cheapestGemPackLabel,
+    this.cheapestGemPackPriceLabel,
   });
 
   @override
@@ -53,7 +63,7 @@ class NoMovesOfferSheet extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: 'Close',
-                      onPressed: () => context.pop(false),
+                      onPressed: () => context.pop(NoMovesOfferAction.later),
                       icon: Icon(Icons.close, color: onSurface.withValues(alpha: 0.85)),
                     ),
                   ],
@@ -98,24 +108,43 @@ class NoMovesOfferSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Coins: $currentCoins',
+                  'Gems: $currentGems',
                   style: context.textStyles.labelLarge?.withColor(onSurface.withValues(alpha: 0.8)),
                 ),
                 const SizedBox(height: 14),
                 FilledButton.icon(
-                  onPressed: (canSummon && canAfford) ? () => context.pop(true) : null,
+                  onPressed: (canSummon && canAfford) ? () => context.pop(NoMovesOfferAction.summon) : null,
                   icon: Icon(Icons.auto_awesome_motion, color: cs.onTertiary),
                   label: Text(
                     canSummon
-                        ? (canAfford ? 'Summon for $discountedCost' : 'Not enough coins')
+                        ? (canAfford ? 'Summon for $discountedCost' : 'Not enough gems')
                         : 'Board is full',
                     style: context.textStyles.titleSmall?.semiBold.withColor(cs.onTertiary),
                   ),
                   style: FilledButton.styleFrom(backgroundColor: cs.tertiary),
                 ),
+
+                if (canSummon && !canAfford && cheapestGemPackLabel != null) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () => context.pop(NoMovesOfferAction.shop),
+                    icon: Icon(Icons.shopping_bag_outlined, color: onSurface),
+                    label: Text(
+                      cheapestGemPackPriceLabel == null
+                          ? 'Get more gems (cheapest: $cheapestGemPackLabel)'
+                          : 'Get more gems • $cheapestGemPackLabel • $cheapestGemPackPriceLabel',
+                      style: context.textStyles.titleSmall?.semiBold.withColor(onSurface),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: onSurface,
+                      side: BorderSide(color: cs.outline.withValues(alpha: 0.35)),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 OutlinedButton(
-                  onPressed: () => context.pop(false),
+                  onPressed: () => context.pop(NoMovesOfferAction.later),
                   style: OutlinedButton.styleFrom(foregroundColor: onSurface),
                   child: const Text('Maybe later'),
                 ),
