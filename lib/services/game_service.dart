@@ -883,8 +883,17 @@ class GameService extends ChangeNotifier {
     return false;
   }
 
-  Future<GameItem?> mergeItems(List<GameItem> items) async {
+  Future<GameItem?> mergeItems(
+    List<GameItem> items, {
+    String? preferredTargetItemId,
+  }) async {
     if (!canMerge(items)) return null;
+
+    // Merge selection must refer to concrete grid positions.
+    if (items.any((e) => e.gridX == null || e.gridY == null)) {
+      debugPrint('Merge blocked: some selected items are not on the board.');
+      return null;
+    }
 
     // Spend energy for a merge
     if (!_spendEnergyIfPossible(1)) {
@@ -908,14 +917,58 @@ class GameService extends ChangeNotifier {
     final newTier = tier + increment;
     if (newTier > _itemTemplates.length) return null;
 
+    // IMPORTANT: The merge result must be placed into a cell that becomes empty
+    // after removing the selected items. Placing it into the geometric center
+    // can target a non-selected cell which might already be occupied.
+    //
+    // Therefore we compute the visual center for effects/spawns, but choose the
+    // actual placement coordinate from the selected items (prefer the user's
+    // anchor when provided).
     final centerX = items.map((e) => e.gridX!).reduce((a, b) => a + b) ~/ items.length;
     final centerY = items.map((e) => e.gridY!).reduce((a, b) => a + b) ~/ items.length;
+
+    GameItem? preferred;
+    if (preferredTargetItemId != null) {
+      for (final e in items) {
+        if (e.id == preferredTargetItemId) {
+          preferred = e;
+          break;
+        }
+      }
+    }
+    preferred ??= items.fold<GameItem>(
+      items.first,
+      (best, cur) {
+        final bd = (best.gridX! - centerX).abs() + (best.gridY! - centerY).abs();
+        final cd = (cur.gridX! - centerX).abs() + (cur.gridY! - centerY).abs();
+        return cd < bd ? cur : best;
+      },
+    );
+
+    final targetX = preferred.gridX!;
+    final targetY = preferred.gridY!;
 
     for (final item in items) {
       _gridItems.removeWhere((i) => i.id == item.id);
     }
 
-    final newItem = _createItem(newTier, centerX, centerY);
+    // Defensive: if the underlying state ever contains duplicates at the target
+    // coordinate (hidden items), make sure the merge result doesn't "stack" and
+    // appear to overwrite another visible tile.
+    final collisions = _gridItems.where((gi) => gi.gridX == targetX && gi.gridY == targetY).toList();
+    if (collisions.isNotEmpty) {
+      debugPrint(
+        'Sanitizing ${collisions.length} unexpected item(s) at merge target ($targetX,$targetY).',
+      );
+      final indexById = <String, int>{for (var i = 0; i < _gridItems.length; i++) _gridItems[i].id: i};
+      for (final c in collisions) {
+        final idx = indexById[c.id];
+        if (idx == null) continue;
+        _gridItems[idx] = _gridItems[idx].copyWith(gridX: null, gridY: null);
+      }
+    }
+
+    final newItem = _createItem(newTier, targetX, targetY);
     _gridItems.add(newItem);
 
     // Permanently record discovery of this tier in the collection

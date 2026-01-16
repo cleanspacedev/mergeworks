@@ -1075,7 +1075,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     // Play advanced merge animation before mutating state
     await _playMergeAnimation(itemsToMerge);
     final prevLevel = gameService.currentLevel;
-    final newItem = await gameService.mergeItems(itemsToMerge);
+    final newItem = await gameService.mergeItems(
+      itemsToMerge,
+      preferredTargetItemId: _selectedItem?.id,
+    );
     if (newItem != null) {
       // Haptics first so it lands with the visual
       unawaited(haptics.onMerge(selectionCount: itemsToMerge.length, resultingTier: newItem.tier));
