@@ -186,7 +186,7 @@ class AudioService extends ChangeNotifier {
     final semis = semitoneOffsets[idx];
     final r = pow(2, semis / 12).toDouble();
     final clamped = r.clamp(0.95, 1.2);
-    return clamped is double ? clamped : (clamped as num).toDouble();
+    return clamped.toDouble();
   }
 
   // ========== Public SFX API ==========

@@ -326,26 +326,27 @@ class AppLevelTheme {
   /// Colors are generated algorithmically; no assets required.
   static List<Color> gradientForLevel(BuildContext context, int level) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    // Cycle hue across the spectrum per level
+    // Cycle hue across the spectrum per level.
+    // We keep a limited number of steps to make each level feel like a distinct “biome”.
     final double hue = (level % 12) * (360 / 12); // 12-step color wheel
-    final double satTop = isDark ? 0.65 : 0.55;
-    final double lightTop = isDark ? 0.22 : 0.90;
-    final double satBottom = isDark ? 0.75 : 0.45;
+
+    // Raw level colors (before blending with the app surface).
+    // Tuned to be noticeably different between levels, especially in dark mode.
+    final double satTop = isDark ? 0.78 : 0.55;
+    final double lightTop = isDark ? 0.26 : 0.92;
+    final double satBottom = isDark ? 0.88 : 0.45;
     final double lightBottom = isDark ? 0.12 : 0.98;
 
-    final top = HSLColor.fromAHSL(1, hue, satTop, lightTop).toColor();
-    final bottom = HSLColor.fromAHSL(1, (hue + 18) % 360, satBottom, lightBottom).toColor();
-    // Blend slightly with surface for consistency
+    final topRaw = HSLColor.fromAHSL(1, hue, satTop, lightTop).toColor();
+    final bottomRaw = HSLColor.fromAHSL(1, (hue + 22) % 360, satBottom, lightBottom).toColor();
+
+    // Blend with surface for visual consistency.
+    // NOTE: This previously used a manual blend with incorrect channel math,
+    // which effectively “flattened” the gradient and made levels look the same.
     final surface = Theme.of(context).colorScheme.surface;
-    Color blend(Color a, Color b, double t) => Color.fromARGB(
-      (((a.a * (1 - t) + b.a * t) * 255.0).round()) & 0xff,
-      (((a.r * (1 - t) + b.r * t) * 255.0).round()) & 0xff,
-      (((a.g * (1 - t) + b.g * t) * 255.0).round()) & 0xff,
-      (((a.b * (1 - t) + b.b * t) * 255.0).round()) & 0xff,
-    );
-    return [
-      blend(top, surface, isDark ? 0.35 : 0.15),
-      blend(bottom, surface, isDark ? 0.15 : 0.05),
-    ];
+    final top = Color.lerp(topRaw, surface, isDark ? 0.14 : 0.10)!;
+    final bottom = Color.lerp(bottomRaw, surface, isDark ? 0.06 : 0.04)!;
+
+    return [top, bottom];
   }
 }

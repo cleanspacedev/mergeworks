@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import 'package:mergeworks/models/spin_reward.dart';
 import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/haptics_service.dart';
 import 'package:mergeworks/widgets/ads_banner.dart';
+import 'package:mergeworks/services/popup_manager.dart';
 
 class DailySpinScreen extends StatefulWidget {
   const DailySpinScreen({super.key});
@@ -106,16 +108,24 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
     if (!ok) {
       // Not enough gems -> suggest visiting Shop
       if (!mounted) return;
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Not enough gems'),
-          content: const Text('Earn more from merges, Daily Spin, or buy Specials in the Shop.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
-            FilledButton(onPressed: () { Navigator.of(context).pop(); context.push('/shop'); }, child: const Text('Open Shop')),
-          ],
-        ),
+      unawaited(
+        context.read<PopupManager>().showAppDialog<void>(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: const Text('Not enough gems'),
+                content: const Text('Earn more from merges, Daily Spin, or buy Specials in the Shop.'),
+                actions: [
+                  TextButton(onPressed: () => context.pop(), child: const Text('OK')),
+                  FilledButton(
+                    onPressed: () {
+                      context.pop();
+                      context.push('/shop');
+                    },
+                    child: const Text('Open Shop'),
+                  ),
+                ],
+              ),
+            ),
       );
       return;
     }
@@ -140,37 +150,34 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
   }
 
   void _showRewardDialog(SpinReward reward) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('🎉 Congratulations!'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              reward.icon,
-              style: const TextStyle(fontSize: 64),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              'You won ${reward.name}!',
-              style: context.textStyles.titleLarge?.bold.copyWith(
-                color: Theme.of(context).colorScheme.primary,
+    unawaited(
+      context.read<PopupManager>().showAppDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('🎉 Congratulations!'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(reward.icon, style: const TextStyle(fontSize: 64)),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    'You won ${reward.name}!',
+                    style: context.textStyles.titleLarge?.bold.copyWith(color: Theme.of(context).colorScheme.primary),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
-              textAlign: TextAlign.center,
+              actions: [
+                FilledButton(
+                  onPressed: () {
+                    context.pop();
+                    context.pop();
+                  },
+                  child: const Text('Awesome!'),
+                ),
+              ],
             ),
-          ],
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              context.pop();
-            },
-            child: const Text('Awesome!'),
           ),
-        ],
-      ),
     );
   }
 

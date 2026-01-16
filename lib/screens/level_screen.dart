@@ -38,30 +38,40 @@ class LevelScreen extends StatelessWidget {
           onPressed: () => context.pop(),
         ),
       ),
-      body: Padding(
-        padding: AppSpacing.paddingLg,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _LevelHeader(colors: colors, level: level),
-            const SizedBox(height: AppSpacing.lg),
-            _ProgressCard(
-              level: level,
-              progress: progress,
-              currentStep: current,
-              totalSteps: span,
-              remaining: remaining,
-              discovered: discovered,
-              nextLevelThreshold: nextLevelThreshold,
+      body: CustomScrollView(
+        slivers: [
+          SliverPadding(
+            padding: AppSpacing.paddingLg,
+            sliver: SliverFillRemaining(
+              hasScrollBody: false,
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _LevelHeader(colors: colors, level: level),
+                    const SizedBox(height: AppSpacing.lg),
+                    _ProgressCard(
+                      level: level,
+                      progress: progress,
+                      currentStep: current,
+                      totalSteps: span,
+                      remaining: remaining,
+                      discovered: discovered,
+                      nextLevelThreshold: nextLevelThreshold,
+                    ),
+                    const Spacer(),
+                    FilledButton.icon(
+                      icon: const Icon(Icons.book),
+                      onPressed: () => context.push('/collection'),
+                      label: const Text('View Collection'),
+                    ),
+                  ],
+                ),
+              ),
             ),
-            const Spacer(),
-            FilledButton.icon(
-              icon: const Icon(Icons.book),
-              onPressed: () => context.push('/collection'),
-              label: const Text('View Collection'),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

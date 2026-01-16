@@ -19,12 +19,35 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/widgets/captions_overlay.dart';
 import 'package:mergeworks/services/bug_report_service.dart';
+import 'package:mergeworks/services/connectivity_service.dart';
+import 'package:mergeworks/services/popup_manager.dart';
+import 'dart:ui';
 
 void main() async {
   // Capture console outputs and framework errors into LogService
   await runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
     LogService.hookGlobalLogging();
+
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      debugPrint('FlutterError: ${details.exceptionAsString()}');
+      debugPrint(details.stack?.toString() ?? '');
+      try {
+        LogService.instance.add('FlutterError: ${details.exceptionAsString()}');
+        if (details.stack != null) LogService.instance.add(details.stack.toString());
+      } catch (_) {}
+    };
+
+    PlatformDispatcher.instance.onError = (error, stack) {
+      debugPrint('Uncaught PlatformDispatcher error: $error');
+      debugPrint(stack.toString());
+      try {
+        LogService.instance.add('Uncaught PlatformDispatcher error: $error');
+        LogService.instance.add(stack.toString());
+      } catch (_) {}
+      return true;
+    };
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       debugPrint('Firebase initialized successfully');
@@ -52,6 +75,8 @@ class MyApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: LogService.instance),
+        ChangeNotifierProvider(create: (_) => PopupManager()),
+        ChangeNotifierProvider(create: (_) => ConnectivityService()..init()),
         ChangeNotifierProvider(create: (_) => FirebaseService()..initialize()),
         ChangeNotifierProvider(create: (_) => GamePlatformService()..initialize()),
         ChangeNotifierProxyProvider2<FirebaseService, GamePlatformService, GameService>(

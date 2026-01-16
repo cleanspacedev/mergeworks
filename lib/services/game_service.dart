@@ -8,11 +8,51 @@ import 'package:mergeworks/services/game_platform_service.dart';
 import 'package:mergeworks/services/game_platform_config.dart';
 import 'dart:math';
 
+@immutable
+class MoveAvailability {
+  const MoveAvailability({
+    required this.currentEnergy,
+    required this.minEnergyRequired,
+    required this.hasSufficientEnergy,
+    required this.boardHasStandardMoves,
+    required this.boardHasAnyMoves,
+    required this.hasOnlyPowerMoves,
+    required this.powerMergeCharges,
+  });
+
+  /// Player's current energy.
+  final int currentEnergy;
+
+  /// The minimum energy required to perform *some* legal move on the current
+  /// board.
+  ///
+  /// `null` means there are no legal moves on the board regardless of energy.
+  ///
+  /// NOTE: Today, merges cost 1 energy, so this will be `1` whenever
+  /// [boardHasAnyMoves] is true. This is intentionally modeled as a value so
+  /// the UI can evolve without being hard-coded to “energy == 0”.
+  final int? minEnergyRequired;
+
+  /// Whether the player has enough energy to perform at least one legal move.
+  final bool hasSufficientEnergy;
+
+  /// Whether the board has a standard 3+ merge available, ignoring energy.
+  final bool boardHasStandardMoves;
+
+  /// Whether the board has *any* merge available under current rules, ignoring
+  /// energy (i.e. may include 2-merges when Power Merge charges exist).
+  final bool boardHasAnyMoves;
+  final bool hasOnlyPowerMoves;
+  final int powerMergeCharges;
+}
+
 class GameService extends ChangeNotifier {
   // Watchdog to guarantee we never stay stuck on loading (e.g., iOS networking stalls)
   Timer? _initWatchdog;
   FirebaseService? _firebaseService;
   GamePlatformService? _platformService;
+
+  String? get _userId => _firebaseService?.userId;
   // Unique ID generator sequence to avoid duplicate IDs when creating items rapidly
   int _idSeq = 0;
   String _makeId(int tier) => 'gi_${DateTime.now().microsecondsSinceEpoch}_${_idSeq++}_t$tier';
@@ -32,6 +72,48 @@ class GameService extends ChangeNotifier {
   List<GameItem> get gridItems => _gridItems;
   bool get isLoading => _isLoading;
   int get powerMergeCharges => _powerMergeCharges;
+
+  /// Snapshot of whether the player has any merge moves available.
+  ///
+  /// This is intended for UX decisions (popups, offers) and is computed from the
+  /// current board state + energy + power-merge rules.
+  MoveAvailability evaluateMoveAvailability() {
+    try {
+      final currentEnergy = _playerStats.energy;
+
+      // Important: move existence should be computed independently from energy.
+      // Otherwise UI can incorrectly classify “no moves” as “no energy”, or
+      // vice-versa.
+      final boardHasStandardMoves = hasAnyStandardMergeMoves(ignoreEnergy: true);
+      final boardHasAnyMoves = hasAnyMergeMoves(ignoreEnergy: true);
+      final hasOnlyPowerMoves = boardHasAnyMoves && !boardHasStandardMoves;
+
+      // Today, any merge costs 1 energy.
+      final minEnergyRequired = boardHasAnyMoves ? 1 : null;
+      final hasSufficientEnergy = minEnergyRequired == null ? true : currentEnergy >= minEnergyRequired;
+
+      return MoveAvailability(
+        currentEnergy: currentEnergy,
+        minEnergyRequired: minEnergyRequired,
+        hasSufficientEnergy: hasSufficientEnergy,
+        boardHasStandardMoves: boardHasStandardMoves,
+        boardHasAnyMoves: boardHasAnyMoves,
+        hasOnlyPowerMoves: hasOnlyPowerMoves,
+        powerMergeCharges: _powerMergeCharges,
+      );
+    } catch (e) {
+      debugPrint('Failed to evaluate move availability: $e');
+      return MoveAvailability(
+        currentEnergy: _playerStats.energy,
+        minEnergyRequired: null,
+        hasSufficientEnergy: true,
+        boardHasStandardMoves: false,
+        boardHasAnyMoves: false,
+        hasOnlyPowerMoves: false,
+        powerMergeCharges: _powerMergeCharges,
+      );
+    }
+  }
 
   // Ephemeral UI event: recently spawned items with an origin for animations
   SpawnEvent? _lastSpawnEvent;
@@ -81,8 +163,8 @@ class GameService extends ChangeNotifier {
   
   void setFirebaseService(FirebaseService service) {
     _firebaseService = service;
-    _firebaseService!.addListener(_onAuthStateChanged);
-    if (_firebaseService!.isInitialized && _firebaseService!.isAuthenticated) {
+    _firebaseService?.addListener(_onAuthStateChanged);
+    if (_firebaseService?.isInitialized == true && _firebaseService?.isAuthenticated == true) {
       initialize();
     }
   }
@@ -92,7 +174,7 @@ class GameService extends ChangeNotifier {
   
   void _onAuthStateChanged() {
     // Only initialize once per app session, and avoid re-entrancy
-    if (_firebaseService!.isAuthenticated && !_initFinalized && !_initInProgress) {
+    if (_firebaseService?.isAuthenticated == true && !_initFinalized && !_initInProgress) {
       initialize();
     }
   }
@@ -224,7 +306,20 @@ class GameService extends ChangeNotifier {
     });
 
     try {
-      final userId = _firebaseService!.userId!;
+      final userId = _userId;
+      if (userId == null || userId.isEmpty) {
+        // This can happen transiently on web during early auth initialization.
+        // Fail safe: stop loading and let the auth listener retry shortly.
+        debugPrint('GameService init aborted: userId is null/empty despite isAuthenticated=true');
+        _initInProgress = false;
+        _isLoading = false;
+        try {
+          _initWatchdog?.cancel();
+          _initWatchdog = null;
+        } catch (_) {}
+        notifyListeners();
+        return;
+      }
       
       // Load player stats from Firestore
       final statsDoc = await _firebaseService!.firestore
@@ -385,7 +480,13 @@ class GameService extends ChangeNotifier {
       _createItem(1, 2, 2),
     ];
     // Add a handful of extra low tiers to make the board feel populated
-    _fillMatchingLowest(count: 12);
+    // Use ambient tier rules so early boards have a mix (Level 1–3: tiers 1–4).
+    _fillAmbientAnywhere(count: 12);
+
+    // Safety: keep at least one easy triple available (tier 1 at the start).
+    if (_countOfTier(1) < 3) {
+      _fillMatchingLowest(count: 3 - _countOfTier(1));
+    }
     _saveState();
   }
 
@@ -396,7 +497,14 @@ class GameService extends ChangeNotifier {
     final minCount = target.clamp(18, 32); // cap to avoid overcrowding a 6x6 grid
     final deficit = minCount - _gridItems.length;
     if (deficit > 0) {
-      _fillMatchingLowest(count: deficit);
+      // Fill with a MIX of tiers (fresh roll per item) using ambient spawn rules.
+      _fillAmbientAnywhere(count: deficit);
+
+      // Guarantee that there are at least 3 of the current lowest tier.
+      final currentLowest = _lowestNonWildcardTierOnBoard();
+      if (_countOfTier(currentLowest) < 3) {
+        _fillMatchingLowest(count: 3 - _countOfTier(currentLowest));
+      }
       _saveState();
     }
   }
@@ -409,7 +517,64 @@ class GameService extends ChangeNotifier {
     return tiers.first;
   }
 
+  // Determine the highest non-wildcard tier currently on the board; defaults to 1
+  int _highestNonWildcardTierOnBoard() {
+    final tiers = _gridItems.where((i) => !i.isWildcard).map((i) => i.tier).toList();
+    if (tiers.isEmpty) return 1;
+    tiers.sort();
+    return tiers.last;
+  }
+
+  void _maybeAutoDiscoverTier(int tier) {
+    // Early-game variety: Levels 1–3 can "auto-discover" tiers 1–4.
+    if (currentLevel > 3) return;
+    final key = 'tier_$tier';
+    if (_playerStats.discoveredItems.contains(key)) return;
+    final discovered = List<String>.from(_playerStats.discoveredItems)..add(key);
+    final newHighest = tier > _playerStats.highestTier ? tier : _playerStats.highestTier;
+    _playerStats = _playerStats.copyWith(discoveredItems: discovered, highestTier: newHighest, updatedAt: DateTime.now());
+  }
+
+  int _ambientSpawnTier() {
+    // Levels 1–3: spawn a random tier 1–4 (auto-discover for onboarding variety)
+    if (currentLevel <= 3) {
+      final maxTier = min(4, _itemTemplates.length).toInt();
+      return 1 + _rand.nextInt(maxTier);
+    }
+
+    // Later: spawn between 1–4 tiers below the current highest tier on the board
+    final highest = _highestNonWildcardTierOnBoard();
+    final delta = 1 + _rand.nextInt(4); // 1..4
+    // Keep this pure-int math (avoid `clamp()` returning `num`).
+    final int upper = highest <= 1 ? 1 : (highest - 1);
+    final int raw = highest - delta;
+    if (raw < 1) return 1;
+    if (raw > upper) return upper;
+    return raw;
+  }
+
   int _countOfTier(int tier) => _gridItems.where((i) => !i.isWildcard && i.tier == tier).length;
+
+  List<GameItem> _fillAmbientAnywhere({required int count}) {
+    final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
+    final allSlots = <Map<String, int>>[];
+    for (int y = 0; y < gridSize; y++) {
+      for (int x = 0; x < gridSize; x++) {
+        if (!occupied.contains('${x}_$y')) allSlots.add({'x': x, 'y': y});
+      }
+    }
+    allSlots.shuffle(_rand);
+    final created = <GameItem>[];
+    for (final slot in allSlots) {
+      if (created.length >= count) break;
+      final tier = _ambientSpawnTier();
+      final it = _createItem(tier, slot['x']!, slot['y']!);
+      _maybeAutoDiscoverTier(tier);
+      _gridItems.add(it);
+      created.add(it);
+    }
+    return created;
+  }
 
   // Fill the board with items that MATCH the current lowest tier, and ensure
   // there are always at least 3 of that tier on the board.
@@ -427,8 +592,6 @@ class GameService extends ChangeNotifier {
     final List<GameItem> created = [];
     final targetTier = _lowestNonWildcardTierOnBoard();
     // Ensure we will reach at least 3 of the lowest tier.
-    final existing = _countOfTier(targetTier);
-    final needForTriple = max(0, 3 - existing);
     for (final slot in allSlots) {
       if (added >= count) break;
       final item = _createItem(targetTier, slot['x']!, slot['y']!);
@@ -477,18 +640,19 @@ class GameService extends ChangeNotifier {
       int placed = 0;
       final List<GameItem> spawned = [];
 
-      final targetTier = _lowestNonWildcardTierOnBoard();
       for (final slot in local) {
         if (placed >= toAdd) break;
+        final targetTier = _ambientSpawnTier();
         final it = _createItem(targetTier, slot['x']!, slot['y']!);
+        _maybeAutoDiscoverTier(targetTier);
         _gridItems.add(it);
         spawned.add(it);
         placed++;
       }
 
       if (placed < toAdd) {
-        // Fallback: fill anywhere but matching lowest tier
-        final extra = _fillMatchingLowest(count: toAdd - placed);
+        // Fallback: fill anywhere using the same ambient tier rules
+        final extra = _fillAmbientAnywhere(count: toAdd - placed);
         spawned.addAll(extra);
       }
 
@@ -652,6 +816,70 @@ class GameService extends ChangeNotifier {
     if (totalCount >= 3) return _playerStats.energy > 0; // require energy to proceed
     // Allow 2-item merge (including wildcard + one item) if a power-merge charge is available
     if (totalCount == 2 && _powerMergeCharges > 0) return _playerStats.energy > 0;
+    return false;
+  }
+
+  /// Returns true if there exists at least one mergeable group on the board
+  /// under the current rules (wildcards allowed, and 2-item merges allowed when
+  /// [powerMergeCharges] > 0).
+  ///
+  /// This is used for UX decisions (e.g. hint prompts, “no moves” prompts).
+  bool hasAnyMergeMoves({bool ignoreEnergy = false}) => _hasAnyMergeMovesInternal(
+    minNeeded: _powerMergeCharges > 0 ? 2 : 3,
+    ignoreEnergy: ignoreEnergy,
+  );
+
+  /// Returns true if there exists at least one *standard* 3-item merge on the
+  /// board (wildcards allowed), regardless of [powerMergeCharges].
+  ///
+  /// This is used for UX that specifically refers to “being stuck” in the
+  /// default game flow. If the player has Power Merge charges, they may still
+  /// be able to do 2-item merges even when this returns false.
+  bool hasAnyStandardMergeMoves({bool ignoreEnergy = false}) => _hasAnyMergeMovesInternal(minNeeded: 3, ignoreEnergy: ignoreEnergy);
+
+  bool _hasAnyMergeMovesInternal({required int minNeeded, required bool ignoreEnergy}) {
+    try {
+      // For UI we sometimes need to know if the *board* has moves even when
+      // the player has no energy.
+      if (!ignoreEnergy && _playerStats.energy <= 0) return false;
+      if (minNeeded < 2) return false;
+
+      final onBoard = _gridItems.where((gi) => gi.gridX != null && gi.gridY != null).toList();
+      if (onBoard.isEmpty) return false;
+
+      bool isEligible(GameItem gi, int baseTier) => gi.isWildcard || gi.tier == baseTier;
+      bool areAdjacent8(GameItem a, GameItem b) {
+        final ax = a.gridX, ay = a.gridY, bx = b.gridX, by = b.gridY;
+        if (ax == null || ay == null || bx == null || by == null) return false;
+        final dx = (ax - bx).abs();
+        final dy = (ay - by).abs();
+        return (dx <= 1 && dy <= 1) && !(dx == 0 && dy == 0);
+      }
+
+      for (final anchor in onBoard) {
+        if (anchor.isWildcard) continue; // avoid ambiguous wildcard-only clusters
+        final baseTier = anchor.tier;
+
+        final visited = <String>{anchor.id};
+        final queue = <GameItem>[anchor];
+        int count = 0;
+
+        while (queue.isNotEmpty) {
+          final cur = queue.removeAt(0);
+          count++;
+          if (count >= minNeeded) return true;
+          for (final other in onBoard) {
+            if (visited.contains(other.id)) continue;
+            if (!isEligible(other, baseTier)) continue;
+            if (!areAdjacent8(cur, other)) continue;
+            visited.add(other.id);
+            queue.add(other);
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to compute merge-moves check (minNeeded=$minNeeded): $e');
+    }
     return false;
   }
 
@@ -830,7 +1058,16 @@ class GameService extends ChangeNotifier {
 
   bool _spendEnergyIfPossible(int cost) {
     if (_playerStats.energy < cost) return false;
-    _playerStats = _playerStats.copyWith(energy: _playerStats.energy - cost, updatedAt: DateTime.now());
+    // Important: reset the energy regen anchor when spending energy.
+    // Otherwise, if the player's [lastEnergyUpdate] is stale (because they
+    // haven't *regenerated* recently), re-opening the app can immediately grant
+    // “catch-up” energy even if the energy was just spent moments ago.
+    final now = DateTime.now();
+    _playerStats = _playerStats.copyWith(
+      energy: _playerStats.energy - cost,
+      lastEnergyUpdate: now,
+      updatedAt: now,
+    );
     return true;
   }
 
@@ -847,8 +1084,29 @@ class GameService extends ChangeNotifier {
       positions.shuffle(_rand);
       final maxCells = positions.length; // gridSize * gridSize
 
-      // Only consider items currently on the board (with grid positions)
-      final onBoard = _gridItems.where((i) => i.gridX != null && i.gridY != null).toList();
+      // Only consider items currently on the board (with grid positions).
+      // IMPORTANT: the UI renders only the *first* item found per cell
+      // (`where(...).firstOrNull`). If stale/duplicate items share the same
+      // coordinate, shuffling *all* of them would appear as if Shuffle “added”
+      // items by spreading those hidden duplicates into empty cells.
+      //
+      // So we shuffle only the same set of items that are effectively visible
+      // on the grid (first item per cell) and sanitize any duplicates.
+      final visibleByCell = <String, GameItem>{};
+      final duplicateIds = <String>{};
+      for (final gi in _gridItems) {
+        final x = gi.gridX;
+        final y = gi.gridY;
+        if (x == null || y == null) continue;
+        final key = '$x,$y';
+        if (visibleByCell.containsKey(key)) {
+          duplicateIds.add(gi.id);
+        } else {
+          visibleByCell[key] = gi;
+        }
+      }
+
+      final onBoard = visibleByCell.values.toList();
       if (onBoard.isEmpty) {
         debugPrint('Shuffle skipped: no on-board items to shuffle.');
         // Refund coins since no action performed
@@ -857,14 +1115,20 @@ class GameService extends ChangeNotifier {
         return false;
       }
 
-      // Clear positions of only on-board items so we can reassign cleanly
-      final indexById = <String, int>{ for (var i = 0; i < _gridItems.length; i++) _gridItems[i].id : i };
+      // Clear positions so we can reassign cleanly.
+      // Also sanitize any duplicates so they can't accidentally become visible.
+      final indexById = <String, int>{for (var i = 0; i < _gridItems.length; i++) _gridItems[i].id: i};
       for (final item in onBoard) {
         final idx = indexById[item.id]!;
         _gridItems[idx] = _gridItems[idx].copyWith(gridX: null, gridY: null);
       }
+      for (final dupId in duplicateIds) {
+        final idx = indexById[dupId];
+        if (idx == null) continue;
+        _gridItems[idx] = _gridItems[idx].copyWith(gridX: null, gridY: null);
+      }
 
-      // Place exactly the same number of items as were on-board
+      // Place exactly the same number of items as were visible on-board.
       final placeCount = onBoard.length.clamp(0, maxCells);
       for (int i = 0; i < placeCount; i++) {
         final pos = positions[i];
@@ -1092,7 +1356,11 @@ class GameService extends ChangeNotifier {
     if (_firebaseService == null || !_firebaseService!.isAuthenticated) return;
     
     try {
-      final userId = _firebaseService!.userId!;
+      final userId = _userId;
+      if (userId == null || userId.isEmpty) {
+        debugPrint('Skip saving player stats: userId is null/empty');
+        return;
+      }
       final data = _playerStats.copyWith(userId: userId).toJson();
       await _firebaseService!.firestore
           .collection('player_stats')
@@ -1107,7 +1375,11 @@ class GameService extends ChangeNotifier {
     if (_firebaseService == null || !_firebaseService!.isAuthenticated) return;
     
     try {
-      final userId = _firebaseService!.userId!;
+      final userId = _userId;
+      if (userId == null || userId.isEmpty) {
+        debugPrint('Skip saving grid items: userId is null/empty');
+        return;
+      }
       final batch = _firebaseService!.firestore.batch();
       final subCol = _firebaseService!.firestore
           .collection('player_stats')
@@ -1132,7 +1404,11 @@ class GameService extends ChangeNotifier {
       debugPrint('Failed to save grid items (subcollection) [${e.code}]: ${e.message}');
       // Legacy fallback: attempt top-level write if rules still allow it
       try {
-        final userId = _firebaseService!.userId!;
+        final userId = _userId;
+        if (userId == null || userId.isEmpty) {
+          debugPrint('Skip legacy grid item save: userId is null/empty');
+          return;
+        }
         final batch = _firebaseService!.firestore.batch();
         final legacyQuery = await _firebaseService!.firestore
             .collection('grid_items')
@@ -1159,8 +1435,11 @@ class GameService extends ChangeNotifier {
 
   List<GameItem> getItemsInRange(int x, int y, int range) {
     return _gridItems.where((item) {
-      final dx = (item.gridX! - x).abs();
-      final dy = (item.gridY! - y).abs();
+      final gx = item.gridX;
+      final gy = item.gridY;
+      if (gx == null || gy == null) return false;
+      final dx = (gx - x).abs();
+      final dy = (gy - y).abs();
       return dx <= range && dy <= range && !(dx == 0 && dy == 0);
     }).toList();
   }

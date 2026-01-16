@@ -14,9 +14,17 @@ import 'package:mergeworks/widgets/currency_display.dart';
 import 'package:mergeworks/widgets/grid_item_widget.dart';
 import 'package:mergeworks/widgets/tutorial_overlay.dart';
 import 'package:mergeworks/widgets/particle_field.dart';
+import 'package:mergeworks/widgets/hint_offer_sheet.dart';
+import 'package:mergeworks/widgets/no_moves_offer_sheet.dart';
+import 'package:mergeworks/widgets/no_energy_offer_sheet.dart';
+import 'package:mergeworks/widgets/no_summons_offer_sheet.dart';
 import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/services/haptics_service.dart';
+import 'package:mergeworks/services/connectivity_service.dart';
+import 'package:mergeworks/services/shop_service.dart';
+import 'package:mergeworks/services/popup_manager.dart';
+import 'package:mergeworks/nav.dart';
 
 class GameBoardScreen extends StatefulWidget {
   const GameBoardScreen({super.key});
@@ -31,8 +39,51 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   final Set<String> _highlightedItems = {};
   final Set<String> _animatingIds = {};
   int _invalidMergeAttempts = 0; // Tracks wrong selections to throttle messaging
-  OverlayEntry? _activeCenterPopup; // Tracks the currently visible center popup
   bool _placingWildcard = false; // When true, tapping an empty cell places a wildcard
+
+  // Hint / idle handling
+  static const int _hintGemCost = 10;
+  static const Duration _idleHintDelay = Duration(seconds: 30);
+  Timer? _idleTimer;
+  bool _isHintSheetOpen = false;
+  bool _isNoMovesSheetOpen = false;
+  bool _isNoEnergySheetOpen = false;
+  bool _noEnergyOfferShownForEpisode = false;
+  Timer? _noEnergyOfferTimer;
+  final Set<String> _hintedItems = {};
+  Timer? _hintClearTimer;
+
+  String? _lastNoMovesSignature;
+  String? _pendingNoMovesSignature;
+  Timer? _noMovesOfferTimer;
+
+  // Delay before showing the “no moves” offer once the board becomes stuck.
+  // This prevents instant popups on refresh and gives the player time to notice.
+  static const Duration _noMovesOfferDelay = Duration(seconds: 30);
+
+  static const Duration _noEnergyOfferDelay = Duration(seconds: 6);
+
+  /// Returns the same set of items that are effectively *visible* on the grid,
+  /// matching the GridView's `firstOrNull` selection behavior.
+  ///
+  /// This protects hint/highlight logic from accidentally targeting “duplicate”
+  /// items that share a cell but are not actually rendered.
+  List<GameItem> _visibleBoardItems(GameService gs, {Set<String> excludedIds = const {}}) {
+    final byCell = <String, GameItem>{};
+    for (final gi in gs.gridItems) {
+      final x = gi.gridX;
+      final y = gi.gridY;
+      if (x == null || y == null) continue;
+      if (excludedIds.contains(gi.id)) continue;
+      final key = '$x,$y';
+      byCell.putIfAbsent(key, () => gi);
+    }
+    return byCell.values.toList();
+  }
+
+  // Prevent false-positive “no moves” offers immediately after a refresh while
+  // the board is still loading/syncing.
+  bool _didInitialMoveCheck = false;
 
   // Particle and measurement helpers
   final GlobalKey _gridKey = GlobalKey();
@@ -56,15 +107,616 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   void initState() {
     super.initState();
     _confettiController = ConfettiController(duration: const Duration(seconds: 2));
+    _resetIdleTimer();
+  }
+
+  Future<void> _runInitialMoveCheckIfNeeded(GameService gs) async {
+    if (!mounted || _didInitialMoveCheck) return;
+    if (gs.isLoading) return;
+    if (!_isOnGameBoardRoute()) return;
+    if (!gs.playerStats.hasCompletedTutorial) {
+      _didInitialMoveCheck = true;
+      return;
+    }
+
+    // Defer one frame to let any just-finished async loads/syncs settle.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _didInitialMoveCheck) return;
+      final gameService = context.read<GameService>();
+      if (gameService.isLoading) return;
+
+      try {
+        final availability = gameService.evaluateMoveAvailability();
+        final sig = _computeNoMovesSignature(gameService);
+
+        if (availability.boardHasAnyMoves && !availability.hasSufficientEnergy) {
+          // If the player is blocked primarily by energy, offer energy rather than “no moves”.
+          unawaited(_maybeShowNoEnergyOffer(gameService, reason: 'initial_load_check'));
+          return;
+        }
+
+        // If there ARE moves, synchronize the debounce signature immediately so
+        // we never open the sheet due to a stale/empty pre-load state.
+        if (availability.hasSufficientEnergy && availability.boardHasStandardMoves) {
+          // Defensive: On rare load/sync frames, move detection may say there is
+          // a standard move, but our hint selection cannot materialize a valid
+          // 3+ merge. Treat that as “stuck” for UX so we don't offer broken hints.
+          if (_hasValidStandardHintCandidate(gameService)) {
+            _lastNoMovesSignature = sig;
+          } else {
+            unawaited(_maybeShowNoMovesOffer(gameService, reason: 'initial_load_hint_mismatch'));
+          }
+        } else if (availability.hasSufficientEnergy && !availability.boardHasStandardMoves) {
+          // If the board is truly stuck after load, it's OK to offer.
+          unawaited(_maybeShowNoMovesOffer(gameService, reason: 'initial_load_check'));
+        }
+      } catch (e) {
+        debugPrint('Initial move check failed: $e');
+      } finally {
+        _didInitialMoveCheck = true;
+      }
+    });
+  }
+
+  bool _isOnGameBoardRoute() {
+    try {
+      final uri = GoRouter.of(context).routeInformationProvider.value.uri;
+      return uri.path == AppRoutes.home;
+    } catch (e) {
+      // If go_router isn't available in this context for any reason, fail safe.
+      debugPrint('Failed to read current route for hint/no-moves gating: $e');
+      return false;
+    }
   }
 
   @override
   void dispose() {
+    _idleTimer?.cancel();
+    _hintClearTimer?.cancel();
+    _noMovesOfferTimer?.cancel();
+    _noEnergyOfferTimer?.cancel();
     _mergeController?.dispose();
     _spawnController?.dispose();
     _pulseController?.dispose();
     _confettiController.dispose();
     super.dispose();
+  }
+
+  void _cancelNoMovesOfferTimer() {
+    _noMovesOfferTimer?.cancel();
+    _noMovesOfferTimer = null;
+    _pendingNoMovesSignature = null;
+  }
+
+  void _cancelNoEnergyOfferTimer() {
+    _noEnergyOfferTimer?.cancel();
+    _noEnergyOfferTimer = null;
+  }
+
+  void _registerUserInteraction() {
+    // Any interaction counts (tap, drag, etc.).
+    _resetIdleTimer();
+  }
+
+  void _resetIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(_idleHintDelay, _handleIdleTimeout);
+  }
+
+  Future<bool?> _showHintOfferSheet() async {
+    if (!mounted || !_isOnGameBoardRoute()) return null;
+
+    // Guard: never open the hint offer UI if the board has no valid standard
+    // (3-item) merges. This can happen if the board changed between scheduling
+    // the idle prompt and actually opening the sheet, or if the hint sheet is
+    // triggered from another UI entry point.
+    try {
+      final gameService = context.read<GameService>();
+      final availability = gameService.evaluateMoveAvailability();
+      if (!availability.boardHasStandardMoves || !_hasValidStandardHintCandidate(gameService)) {
+        _showCenterPopup('No matches left', icon: Icons.search_off);
+        unawaited(_maybeShowNoMovesOffer(gameService, reason: 'hint_sheet_no_moves'));
+        return null;
+      }
+    } catch (e) {
+      debugPrint('Failed to validate hint sheet preconditions: $e');
+      // If we cannot validate, fall through and try to show the sheet; the
+      // reveal step still defensively checks before charging gems.
+    }
+
+    _isHintSheetOpen = true;
+    try {
+      final gameService = context.read<GameService>();
+      final gems = gameService.playerStats.gems;
+      final canAfford = gems >= _hintGemCost;
+      return await context.read<PopupManager>().showBottomSheet<bool>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            backgroundColor: Colors.transparent,
+            builder: (context) => HintOfferSheet(costGems: _hintGemCost, canAfford: canAfford, currentGems: gems),
+          );
+    } catch (e) {
+      debugPrint('Failed to show hint offer sheet: $e');
+      return null;
+    } finally {
+      _isHintSheetOpen = false;
+    }
+  }
+
+  Future<void> _revealHint({required int cost}) async {
+    final gameService = context.read<GameService>();
+    final audio = context.read<AudioService>();
+    final haptics = context.read<HapticsService>();
+
+    if (gameService.playerStats.gems < cost) {
+      _showMessage('Not enough gems 💎');
+      return;
+    }
+
+    // Compute the hint BEFORE charging, so the player never pays if the board is
+    // actually stuck (or if the state changed between the offer sheet and now).
+    // Also exclude any items currently hidden by animations (merge/spawn),
+    // otherwise the user can briefly *see* only 2 highlighted tiles.
+    final hintIds = _findMergeHintIds(gameService, excludedIds: _animatingIds);
+    final currentItems = _visibleBoardItems(gameService, excludedIds: _animatingIds).where((gi) => hintIds.contains(gi.id)).toList();
+    // Defensive: never show a 2-item “hint”. Hints are for standard 3+ merges.
+    if (hintIds.length < 3 || currentItems.length < 3 || !gameService.canMerge(currentItems)) {
+      _showCenterPopup('No merges found… try summoning!', icon: Icons.search_off);
+      unawaited(_maybeShowNoMovesOffer(gameService, reason: 'reveal_no_standard_merge'));
+      return;
+    }
+
+    // Spend gems.
+    await gameService.addGems(-cost);
+    audio.playAbilityUseSound();
+    haptics.successSoft();
+
+    _hintClearTimer?.cancel();
+    setState(() {
+      _hintedItems
+        ..clear()
+        ..addAll(hintIds);
+    });
+
+    _showCenterPopup('Hint revealed ✨', icon: Icons.lightbulb);
+    _hintClearTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      setState(() => _hintedItems.clear());
+    });
+  }
+
+  Set<String> _findMergeHintIds(GameService gameService, {Set<String> excludedIds = const {}}) {
+    try {
+      // Hints are meant to teach/guide the *standard* merge rule (3+ connected).
+      // Even if the player has Power Merge charges, we avoid showing “2-item”
+      // hints because it feels like a false positive when the board is stuck
+      // for normal merges.
+      const minNeeded = 3;
+      final onBoard = _visibleBoardItems(gameService, excludedIds: excludedIds);
+      if (onBoard.isEmpty) return {};
+
+      bool isEligible(GameItem gi, int baseTier) => gi.isWildcard || gi.tier == baseTier;
+
+      // Prefer the lowest tier merges first to keep hints “obvious”.
+      onBoard.sort((a, b) {
+        final ta = a.isWildcard ? 9999 : a.tier;
+        final tb = b.isWildcard ? 9999 : b.tier;
+        final byTier = ta.compareTo(tb);
+        if (byTier != 0) return byTier;
+        final ax = a.gridX ?? 0, ay = a.gridY ?? 0;
+        final bx = b.gridX ?? 0, by = b.gridY ?? 0;
+        final da = (ax - 2).abs() + (ay - 2).abs();
+        final db = (bx - 2).abs() + (by - 2).abs();
+        return da.compareTo(db);
+      });
+
+      for (final anchor in onBoard) {
+        if (anchor.isWildcard) continue; // avoid ambiguous “all-wildcard” anchor
+        final baseTier = anchor.tier;
+        final visited = <String>{};
+        final queue = <GameItem>[anchor];
+        final picked = <GameItem>[];
+
+        visited.add(anchor.id);
+
+        while (queue.isNotEmpty) {
+          final cur = queue.removeAt(0);
+          picked.add(cur);
+          for (final other in onBoard) {
+            if (visited.contains(other.id)) continue;
+            if (!isEligible(other, baseTier)) continue;
+            if (_areAdjacent8(cur, other)) {
+              visited.add(other.id);
+              queue.add(other);
+            }
+          }
+        }
+
+        if (picked.length < minNeeded) continue;
+
+        // Take the closest minNeeded items to the anchor so the hint is small and clear.
+        int distSq(GameItem a) {
+          final dx = (a.gridX! - anchor.gridX!);
+          final dy = (a.gridY! - anchor.gridY!);
+          return dx * dx + dy * dy;
+        }
+
+        picked.sort((a, b) => distSq(a).compareTo(distSq(b)));
+        final hint = picked.take(minNeeded).map((e) => e.id).toSet();
+
+        // Validate with the game rule engine (includes energy check).
+        final itemsToMerge = _visibleBoardItems(gameService, excludedIds: excludedIds).where((gi) => hint.contains(gi.id)).toList();
+        if (gameService.canMerge(itemsToMerge)) return hint;
+      }
+    } catch (e) {
+      debugPrint('Failed to compute hint: $e');
+    }
+    return {};
+  }
+
+  Future<void> _handleIdleTimeout() async {
+    if (!mounted || _isHintSheetOpen) return;
+
+    // Critical: the GameBoard screen can remain mounted underneath other routes
+    // (e.g. LevelScreen). Never show hint/no-moves UI unless the user is
+    // currently viewing the home/game route.
+    if (!_isOnGameBoardRoute()) {
+      if (mounted) _resetIdleTimer();
+      return;
+    }
+
+    final gameService = context.read<GameService>();
+    final showTutorial = !gameService.playerStats.hasCompletedTutorial;
+    if (showTutorial) {
+      _resetIdleTimer();
+      return;
+    }
+
+    final availability = gameService.evaluateMoveAvailability();
+    // If the board has moves but the player can't afford even the cheapest one,
+    // offer an energy refill instead.
+    if (availability.boardHasAnyMoves && !availability.hasSufficientEnergy) {
+      await _maybeShowNoEnergyOffer(gameService, reason: 'idle');
+      if (mounted) _resetIdleTimer();
+      return;
+    }
+
+    // If the board has no legal standard merges, don't show the hint offer.
+    if (!availability.boardHasStandardMoves) {
+      await _maybeShowNoMovesOffer(gameService, reason: 'idle');
+      if (mounted) _resetIdleTimer();
+      return;
+    }
+
+    // Extra guard: only offer hints if we can actually compute a standard (3+) merge.
+    // This avoids rare edge cases where the move-detection and hint selection could
+    // temporarily disagree due to async updates.
+    final hintCandidate = _findMergeHintIds(gameService, excludedIds: _animatingIds);
+    final hintItems = gameService.gridItems.where((gi) => hintCandidate.contains(gi.id) && !_animatingIds.contains(gi.id)).toList();
+    if (hintCandidate.length < 3 || hintItems.length < 3 || !gameService.canMerge(hintItems)) {
+      await _maybeShowNoMovesOffer(gameService, reason: 'idle_hint_mismatch');
+      if (mounted) _resetIdleTimer();
+      return;
+    }
+
+    if (gameService.playerStats.gems < _hintGemCost) {
+      _resetIdleTimer();
+      return;
+    }
+
+    final shouldReveal = await _showHintOfferSheet();
+    // Treat closing the sheet as “interaction” so it won’t re-open instantly.
+    if (mounted) _resetIdleTimer();
+    if (shouldReveal == true && mounted) {
+      await _revealHint(cost: _hintGemCost);
+    }
+  }
+
+  String _computeNoMovesSignature(GameService gs) {
+    final buffer = StringBuffer();
+    // Signature for debouncing the “no standard moves” offer.
+    // IMPORTANT: Do NOT include energy in this signature.
+    // Energy can regenerate while the board is stuck, which would constantly
+    // change the signature and prevent the delayed no-moves offer from ever
+    // firing.
+    //
+    // Power Merge charges are also intentionally excluded because they don't
+    // affect whether *standard* 3-item merges exist, and including them can
+    // cause the sheet to reopen unexpectedly after buying/consuming charges.
+    for (final i in gs.gridItems) {
+      buffer.write('${i.id}:${i.tier}:${i.gridX}:${i.gridY}:${i.isWildcard ? 1 : 0};');
+    }
+    return buffer.toString();
+  }
+
+  bool _hasValidStandardHintCandidate(GameService gs) {
+    try {
+      final candidate = _findMergeHintIds(gs, excludedIds: _animatingIds);
+      if (candidate.length < 3) return false;
+      final items = _visibleBoardItems(gs, excludedIds: _animatingIds).where((gi) => candidate.contains(gi.id)).toList();
+      if (items.length < 3) return false;
+      return gs.canMerge(items);
+    } catch (e) {
+      debugPrint('Failed to validate hint candidate: $e');
+      return false;
+    }
+  }
+
+  bool _canSummonNow(GameService gs) {
+    final occupied = gs.gridItems.where((i) => i.gridX != null && i.gridY != null).map((i) => '${i.gridX}_${i.gridY}').toSet();
+    for (int y = 0; y < GameService.gridSize; y++) {
+      for (int x = 0; x < GameService.gridSize; x++) {
+        if (!occupied.contains('${x}_$y')) return true;
+      }
+    }
+    return false;
+  }
+
+  Future<bool?> _showNoMovesOfferSheet({required int summonCount, required int discountedCost, required int originalCost}) async {
+    if (!mounted || !_isOnGameBoardRoute()) return null;
+    _isNoMovesSheetOpen = true;
+    try {
+      final gs = context.read<GameService>();
+      final coins = gs.playerStats.coins;
+      final canSummon = _canSummonNow(gs);
+      final canAfford = coins >= discountedCost;
+      return await context.read<PopupManager>().showBottomSheet<bool>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            backgroundColor: Colors.transparent,
+            builder: (context) => NoMovesOfferSheet(
+              summonCount: summonCount,
+              discountedCost: discountedCost,
+              originalCost: originalCost,
+              currentCoins: coins,
+              canSummon: canSummon,
+              canAfford: canAfford,
+            ),
+          );
+    } catch (e) {
+      debugPrint('Failed to show no-moves offer sheet: $e');
+      return null;
+    } finally {
+      _isNoMovesSheetOpen = false;
+    }
+  }
+
+  Future<bool?> _showNoSummonsOfferSheet({required int discountedCost, required int originalCost}) async {
+    if (!mounted || !_isOnGameBoardRoute()) return null;
+    _isNoMovesSheetOpen = true;
+    try {
+      final gs = context.read<GameService>();
+      final coins = gs.playerStats.coins;
+      final canAfford = coins >= discountedCost;
+      return await context.read<PopupManager>().showBottomSheet<bool>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            backgroundColor: Colors.transparent,
+            builder: (context) => NoSummonsOfferSheet(
+              discountedCost: discountedCost,
+              originalCost: originalCost,
+              currentCoins: coins,
+              canAfford: canAfford,
+            ),
+          );
+    } catch (e) {
+      debugPrint('Failed to show no-summons offer sheet: $e');
+      return null;
+    } finally {
+      _isNoMovesSheetOpen = false;
+    }
+  }
+
+  Future<void> _maybeShowNoMovesOffer(GameService gs, {required String reason}) async {
+    if (!mounted || _isNoMovesSheetOpen) return;
+    if (!_isOnGameBoardRoute()) return;
+    if (!gs.playerStats.hasCompletedTutorial) return;
+
+    final availability = gs.evaluateMoveAvailability();
+    // Being blocked by energy is not “no moves”. Show the energy offer instead.
+    if (availability.boardHasAnyMoves && !availability.hasSufficientEnergy) {
+      _cancelNoMovesOfferTimer();
+      unawaited(_maybeShowNoEnergyOffer(gs, reason: 'no_moves_redirect_$reason'));
+      return;
+    }
+
+    // Don't show if there are moves.
+    if (availability.boardHasStandardMoves) {
+      _cancelNoMovesOfferTimer();
+      return;
+    }
+
+    // Debounce per-board-state to avoid re-opening repeatedly, but with a delay.
+    // We only “commit” (_lastNoMovesSignature) once we actually show the sheet.
+    final sig = _computeNoMovesSignature(gs);
+    if (_lastNoMovesSignature == sig) return;
+    if (_pendingNoMovesSignature == sig && _noMovesOfferTimer?.isActive == true) return;
+
+    _pendingNoMovesSignature = sig;
+    _noMovesOfferTimer?.cancel();
+    _noMovesOfferTimer = Timer(_noMovesOfferDelay, () async {
+      if (!mounted || _isNoMovesSheetOpen) return;
+      if (!_isOnGameBoardRoute()) return;
+
+      final gameService = context.read<GameService>();
+      if (gameService.isLoading) return;
+
+      try {
+        final availabilityNow = gameService.evaluateMoveAvailability();
+        if ((availabilityNow.boardHasAnyMoves && !availabilityNow.hasSufficientEnergy) || availabilityNow.boardHasStandardMoves) {
+          _cancelNoMovesOfferTimer();
+          return;
+        }
+
+        final sigNow = _computeNoMovesSignature(gameService);
+        if (_pendingNoMovesSignature != sigNow) return; // board changed during delay
+        if (_lastNoMovesSignature == sigNow) {
+          _cancelNoMovesOfferTimer();
+          return;
+        }
+
+        _lastNoMovesSignature = sigNow;
+        _pendingNoMovesSignature = null;
+        _noMovesOfferTimer = null;
+
+        // If the board is full, summoning can't help. Offer a discounted shuffle instead.
+        if (!_canSummonNow(gameService)) {
+          const shuffleOriginalCost = 150;
+          const shuffleDiscountedCost = 75;
+          final shouldShuffle = await _showNoSummonsOfferSheet(discountedCost: shuffleDiscountedCost, originalCost: shuffleOriginalCost);
+          if (!mounted) return;
+          if (shouldShuffle == true) {
+            final audio = context.read<AudioService>();
+            final haptics = context.read<HapticsService>();
+            audio.playAbilityUseSound();
+            final ok = await gameService.abilityShuffleBoard(cost: shuffleDiscountedCost);
+            if (ok) {
+              haptics.onAbilityShuffle();
+              _showMessage('Shuffled the board 🔀');
+              await _maybeShowNoMovesOffer(gameService, reason: 'after_discount_shuffle');
+            } else {
+              _showMessage('Not enough coins');
+            }
+          }
+          return;
+        }
+
+        const summonCount = 4;
+        const originalCost = 80;
+        const discountedCost = 40;
+
+        final shouldSummon = await _showNoMovesOfferSheet(summonCount: summonCount, discountedCost: discountedCost, originalCost: originalCost);
+        if (!mounted) return;
+
+        if (shouldSummon == true) {
+          final audio = context.read<AudioService>();
+          final haptics = context.read<HapticsService>();
+          audio.playAbilityUseSound();
+          final ok = await gameService.abilitySummonBurst(count: summonCount, cost: discountedCost);
+          if (ok) {
+            haptics.onSummon();
+            _showMessage('Summoned new items ✨');
+          } else {
+            _showMessage('Couldn\'t summon (board full or not enough coins)');
+          }
+        }
+      } catch (e) {
+        debugPrint('No-moves delayed offer failed ($reason): $e');
+      }
+    });
+  }
+
+  Future<bool?> _showNoEnergyOfferSheet({required int energyAmount, required int currentEnergy, required int requiredEnergy}) async {
+    if (!mounted || !_isOnGameBoardRoute()) return null;
+    _isNoEnergySheetOpen = true;
+    try {
+      final shop = context.read<ShopService>();
+      final priceLabel = shop.priceLabelFor('energy_100') ?? '\$0.99';
+      final purchaseEnabled = true;
+      return await context.read<PopupManager>().showBottomSheet<bool>(
+            context: context,
+            isScrollControlled: true,
+            useSafeArea: true,
+            backgroundColor: Colors.transparent,
+            builder: (context) => NoEnergyOfferSheet(
+              energyPackAmount: energyAmount,
+              currentEnergy: currentEnergy,
+              requiredEnergy: requiredEnergy,
+              priceLabel: priceLabel,
+              purchaseEnabled: purchaseEnabled,
+            ),
+          );
+    } catch (e) {
+      debugPrint('Failed to show no-energy offer sheet: $e');
+      return null;
+    } finally {
+      _isNoEnergySheetOpen = false;
+    }
+  }
+
+  Future<void> _maybeShowNoEnergyOffer(GameService gs, {required String reason}) async {
+    if (!mounted || _isNoEnergySheetOpen) return;
+    if (!_isOnGameBoardRoute()) return;
+    if (!gs.playerStats.hasCompletedTutorial) return;
+
+    final availability = gs.evaluateMoveAvailability();
+    final requiredEnergy = availability.minEnergyRequired ?? 1;
+
+    // Reset episode if energy has recovered to a playable state.
+    if (gs.playerStats.energy >= requiredEnergy) {
+      _noEnergyOfferShownForEpisode = false;
+      _cancelNoEnergyOfferTimer();
+      return;
+    }
+
+    if (_noEnergyOfferShownForEpisode) return;
+    if (_noEnergyOfferTimer?.isActive == true) return;
+
+    _noEnergyOfferTimer = Timer(_noEnergyOfferDelay, () async {
+      if (!mounted || _isNoEnergySheetOpen) return;
+      if (!_isOnGameBoardRoute()) return;
+
+      final gameService = context.read<GameService>();
+      if (gameService.isLoading) return;
+      final availabilityNow = gameService.evaluateMoveAvailability();
+      final requiredEnergyNow = availabilityNow.minEnergyRequired ?? 1;
+      if (gameService.playerStats.energy >= requiredEnergyNow) return;
+
+      try {
+        _noEnergyOfferShownForEpisode = true;
+        _noEnergyOfferTimer = null;
+
+        const energyAmount = 100;
+        final shouldBuy = await _showNoEnergyOfferSheet(
+          energyAmount: energyAmount,
+          currentEnergy: gameService.playerStats.energy,
+          requiredEnergy: requiredEnergyNow,
+        );
+        if (!mounted) return;
+        if (shouldBuy == true) {
+          await _buyEnergyFromOffer(energyAmount: energyAmount);
+        }
+      } catch (e) {
+        debugPrint('No-energy delayed offer failed ($reason): $e');
+      }
+    });
+  }
+
+  Future<void> _buyEnergyFromOffer({required int energyAmount}) async {
+    final shop = context.read<ShopService>();
+    final game = context.read<GameService>();
+
+    try {
+      context.read<PopupManager>().showDialogNonBlocking(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => const Center(child: CircularProgressIndicator()),
+          );
+
+      final success = await shop.purchase('energy_100');
+      if (!mounted) return;
+      try {
+        Navigator.of(context, rootNavigator: true).pop();
+      } catch (_) {}
+
+      if (success) {
+        await game.addEnergy(energyAmount);
+        if (mounted) _showCenterPopup('Energy refilled ⚡', icon: Icons.bolt);
+      } else {
+        if (mounted) _showMessage('Purchase failed. Please try again.');
+      }
+    } catch (e) {
+      debugPrint('Energy purchase from offer failed: $e');
+      if (mounted) {
+        try {
+          Navigator.of(context, rootNavigator: true).pop();
+        } catch (_) {}
+        _showMessage('Purchase failed. Please try again.');
+      }
+    }
   }
 
   // Helper to safely trigger rebuilds from extension methods without using the
@@ -172,6 +824,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   }
 
   void _onItemTap(GameItem item, GameService gameService) {
+    _registerUserInteraction();
     // Ensure BG music can start on platforms that require a user gesture (e.g., Web)
     context.read<AudioService>().maybeStartMusicFromUserGesture();
     setState(() {
@@ -247,6 +900,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   }
 
   void _onItemLongPress(GameItem item, GameService gameService) {
+    _registerUserInteraction();
     context.read<AudioService>().maybeStartMusicFromUserGesture();
     final count = gameService.playerStats.autoSelectCount;
     if (count <= 0) {
@@ -409,6 +1063,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
     if (gameService.playerStats.energy <= 0) {
       _showMessage('Not enough energy ⚡');
+      unawaited(_maybeShowNoEnergyOffer(gameService, reason: 'merge_attempt'));
       return;
     }
     
@@ -473,6 +1128,31 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         await gameService.addCoins(quest.rewardCoins);
         _showMessage('Quest completed: ${quest.title}! 🎯');
       }
+
+      // Post-merge board evaluation: decide which (if any) offer/nudge to show.
+      await _runPostMergeBoardCheck(gameService);
+    }
+  }
+
+  Future<void> _runPostMergeBoardCheck(GameService gs) async {
+    if (!mounted) return;
+    final availability = gs.evaluateMoveAvailability();
+
+    // If the player is blocked by energy, don't show “no moves” UX.
+    if (availability.boardHasAnyMoves && !availability.hasSufficientEnergy) {
+      unawaited(_maybeShowNoEnergyOffer(gs, reason: 'after_merge'));
+      return;
+    }
+
+    if (!availability.boardHasAnyMoves) {
+      await _maybeShowNoMovesOffer(gs, reason: 'after_merge_no_moves');
+      return;
+    }
+
+    // If there are no standard 3+ merges, but Power Merge could still help,
+    // give a gentle nudge (and avoid opening the no-moves sheet).
+    if (availability.hasOnlyPowerMoves && availability.powerMergeCharges > 0) {
+      _showCenterPopup('No 3-merges left — try Power Merge ⚡', icon: Icons.flash_on);
     }
   }
 
@@ -492,105 +1172,50 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
   void _showMessage(String message) {
     if (!mounted) return;
-    _showCenterPopup(message, icon: Icons.auto_awesome);
+    unawaited(context.read<PopupManager>().showCenterToast(context, message: message, icon: Icons.auto_awesome));
   }
 
   void _showCenterPopup(String message, {IconData? icon, Duration duration = const Duration(milliseconds: 1600)}) {
-    try {
-      // Remove any existing popup to avoid stacking
-      _activeCenterPopup?.remove();
-      _activeCenterPopup = null;
-
-      final overlay = Overlay.of(context);
-
-      final Color bg = Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.95);
-      final Color border = Theme.of(context).colorScheme.outline.withValues(alpha: 0.25);
-      final Color onBg = Theme.of(context).colorScheme.onSurface;
-
-      late AnimationController controller;
-      late CurvedAnimation curve;
-
-      controller = AnimationController(vsync: this, duration: const Duration(milliseconds: 200), reverseDuration: const Duration(milliseconds: 140));
-      curve = CurvedAnimation(parent: controller, curve: Curves.easeOutBack, reverseCurve: Curves.easeIn);
-
-      final entry = OverlayEntry(
-        builder: (ctx) {
-          return Positioned.fill(
-            child: IgnorePointer(
-              ignoring: true,
-              child: Center(
-                child: AnimatedBuilder(
-                  animation: curve,
-                  builder: (context, _) {
-                    final double t = curve.value;
-                    return Opacity(
-                      opacity: t.clamp(0.0, 1.0),
-                      child: Transform.scale(
-                        scale: (0.9 + 0.1 * t).clamp(0.9, 1.0),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                          decoration: BoxDecoration(
-                            color: bg,
-                            borderRadius: BorderRadius.circular(AppRadius.lg),
-                            border: Border.all(color: border, width: 1),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (icon != null) ...[
-                                Icon(icon, color: onBg, size: 22),
-                                const SizedBox(width: 10),
-                              ],
-                              Flexible(
-                                child: Text(
-                                  message,
-                                  style: context.textStyles.titleSmall?.medium.withColor(onBg),
-                                  softWrap: true,
-                                  overflow: TextOverflow.ellipsis,
-                                  maxLines: 2,
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ),
-          );
-        },
-      );
-
-      overlay.insert(entry);
-      _activeCenterPopup = entry;
-      controller.forward();
-
-      Future.delayed(duration, () async {
-        try {
-          if (mounted) {
-            await controller.reverse();
-          }
-        } catch (_) {}
-        finally {
-          if (entry.mounted) {
-            try { entry.remove(); } catch (_) {}
-          }
-          _activeCenterPopup = null;
-          try { controller.dispose(); } catch (_) {}
-        }
-      });
-    } catch (e) {
-      debugPrint('Center popup failed: $e');
-    }
+    if (!mounted) return;
+    unawaited(context.read<PopupManager>().showCenterToast(context, message: message, icon: icon, duration: duration));
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer4<GameService, AudioService, AchievementService, QuestService>(
       builder: (context, gameService, audioService, achievementService, questService, child) {
+        // After a refresh, the service can briefly report “no moves” while
+        // Firestore/local state finishes loading. Run a one-time check once
+        // loading completes to sync our debounce state.
+        unawaited(_runInitialMoveCheckIfNeeded(gameService));
+
+        // If the board becomes stuck at any point (including via remote sync),
+        // offer a discounted summon once per board state.
+        if (!_isNoMovesSheetOpen && _didInitialMoveCheck && !gameService.isLoading && gameService.playerStats.hasCompletedTutorial) {
+          final sig = _computeNoMovesSignature(gameService);
+          if (_lastNoMovesSignature != sig && !gameService.hasAnyStandardMergeMoves()) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              unawaited(_maybeShowNoMovesOffer(gameService, reason: 'build_watch'));
+            });
+          }
+        }
+
+        // If the board changes while a hint is active (e.g. remote sync, ability
+        // usage, etc.), ensure we never keep showing a “partial” hint.
+        if (_hintedItems.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            // Only count tiles that are both present AND visible (not currently
+            // hidden by merge/spawn animations). If fewer than 3 remain visible,
+            // the hint is misleading.
+            final visibleCount = _visibleBoardItems(gameService, excludedIds: _animatingIds).where((gi) => _hintedItems.contains(gi.id)).length;
+            if (visibleCount < 3) {
+              setState(() => _hintedItems.clear());
+            }
+          });
+        }
+
         // After the frame, check for newly spawned items to animate
         WidgetsBinding.instance.addPostFrameCallback((_) {
           final ev = gameService.takeLastSpawnEvent();
@@ -599,6 +1224,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
           }
         });
         if (gameService.isLoading) {
+          final hasNetwork = context.watch<ConnectivityService>().hasNetwork;
           return Scaffold(
             body: Center(
               child: Column(
@@ -607,12 +1233,14 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   const CircularProgressIndicator(),
                   const SizedBox(height: 16),
                   Text('Loading your game...', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => context.read<GameService>().forceLocalFallback(),
-                    icon: Icon(Icons.wifi_off, color: Theme.of(context).colorScheme.primary),
-                    label: Text('Continue offline', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-                  ),
+                  if (!hasNetwork) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => context.read<GameService>().forceLocalFallback(),
+                      icon: Icon(Icons.wifi_off, color: Theme.of(context).colorScheme.primary),
+                      label: Text('Continue offline', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -622,7 +1250,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         final showTutorial = !gameService.playerStats.hasCompletedTutorial;
 
         return Scaffold(
-          body: Stack(
+          body: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) => _registerUserInteraction(),
+            onPointerMove: (_) => _registerUserInteraction(),
+            child: Stack(
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 700),
@@ -727,6 +1359,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   },
                 ),
             ],
+          ),
           ),
         );
       },
@@ -858,7 +1491,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                       opacity: hidden ? 0.0 : 1.0,
                       child: GridItemWidget(
                         item: item,
-                        isHighlighted: _highlightedItems.contains(item.id),
+                        isHighlighted: _highlightedItems.contains(item.id) || _hintedItems.contains(item.id),
                         onTap: () => _onItemTap(item, gameService),
                         onLongPress: () => _onItemLongPress(item, gameService),
                       ),
@@ -878,6 +1511,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                     return InkWell(
                       borderRadius: BorderRadius.circular(AppRadius.sm),
                       onTap: () async {
+                        _registerUserInteraction();
                         context.read<AudioService>().maybeStartMusicFromUserGesture();
                         final ok = await gameService.abilityPlaceWildcardAt(x, y);
                         if (ok) {
@@ -951,6 +1585,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                           if (ok) {
                             context.read<HapticsService>().onSummon();
                             _showMessage('Summoned new items ✨');
+                             await _maybeShowNoMovesOffer(gameService, reason: 'after_summon');
                           } else {
                             _showMessage(isBoardFull ? 'Board is full' : 'Not enough coins');
                           }
@@ -965,7 +1600,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                       ? () async {
                           context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilityDuplicateItem(_selectedItem!.id, cost: 120);
-                          if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); }
+                           if (ok) { context.read<HapticsService>().onAbilityDuplicate(); _showMessage('Duplicated item ➕'); await _maybeShowNoMovesOffer(gameService, reason: 'after_duplicate'); }
                           else _showMessage('Action failed or not enough coins');
                         }
                       : null,
@@ -983,6 +1618,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                             setState(() { _selectedItem = null; _highlightedItems.clear(); });
                             context.read<HapticsService>().onAbilityClear();
                             _showMessage('Cleared item 🧹');
+                             await _maybeShowNoMovesOffer(gameService, reason: 'after_clear');
                           } else {
                             _showMessage('Action failed or not enough coins');
                           }
@@ -998,7 +1634,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                       ? () async {
                           context.read<AudioService>().playAbilityUseSound();
                           final ok = await gameService.abilityShuffleBoard(cost: 150);
-                          if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); }
+                           if (ok) { context.read<HapticsService>().onAbilityShuffle(); _showMessage('Shuffled the board 🔀'); await _maybeShowNoMovesOffer(gameService, reason: 'after_shuffle'); }
                           else _showMessage('Not enough coins');
                         }
                       : null,

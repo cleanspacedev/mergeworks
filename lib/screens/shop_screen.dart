@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/shop_service.dart';
@@ -9,6 +10,7 @@ import 'package:mergeworks/services/haptics_service.dart';
 import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/widgets/particle_field.dart';
 import 'package:mergeworks/widgets/ads_banner.dart';
+import 'package:mergeworks/services/popup_manager.dart';
 
 class ShopScreen extends StatelessWidget {
   const ShopScreen({super.key});
@@ -159,16 +161,18 @@ class ShopScreen extends StatelessWidget {
       return;
     }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    context.read<PopupManager>().showDialogNonBlocking(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(child: CircularProgressIndicator()),
+        );
 
     final success = await shopService.purchase(item.id);
     
     if (context.mounted) {
-      Navigator.of(context).pop();
+      try {
+        Navigator.of(context, rootNavigator: true).pop();
+      } catch (_) {}
 
       if (success) {
         if (item.type == ShopItemType.energy && item.energyAmount != null) {
@@ -197,22 +201,26 @@ class ShopScreen extends StatelessWidget {
   }
 
   void _showPurchasePopup(BuildContext context, {required String title, required String subtitle, required String emoji}) {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'Purchased',
-      barrierColor: Colors.black.withValues(alpha: 0.4),
-      transitionDuration: const Duration(milliseconds: 260),
-      pageBuilder: (_, __, ___) => const SizedBox.shrink(),
-      transitionBuilder: (context, anim, _, __) {
-        final opacity = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut));
-        return Opacity(
-          opacity: opacity.value,
-          child: Center(
-            child: _PurchasePopup(title: title, subtitle: subtitle, emoji: emoji),
-          ),
-        );
-      },
+    unawaited(
+      context.read<PopupManager>().enqueue(() async {
+            if (!context.mounted) return null;
+            await showGeneralDialog(
+              context: context,
+              barrierDismissible: true,
+              barrierLabel: 'Purchased',
+              barrierColor: Colors.black.withValues(alpha: 0.4),
+              transitionDuration: const Duration(milliseconds: 260),
+              pageBuilder: (_, __, ___) => const SizedBox.shrink(),
+              transitionBuilder: (context, anim, _, __) {
+                final opacity = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: anim, curve: Curves.easeOut));
+                return Opacity(
+                  opacity: opacity.value,
+                  child: Center(child: _PurchasePopup(title: title, subtitle: subtitle, emoji: emoji)),
+                );
+              },
+            );
+            return null;
+          }),
     );
   }
 }

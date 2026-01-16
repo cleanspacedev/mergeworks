@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/audio_service.dart';
@@ -12,6 +13,7 @@ import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/services/game_platform_service.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
+import 'package:mergeworks/services/popup_manager.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -254,12 +256,12 @@ class SettingsScreen extends StatelessWidget {
               width: double.infinity,
               child: FilledButton.icon(
                 onPressed: () async {
-                  final result = await showModalBottomSheet<String>(
-                    context: context,
-                    isScrollControlled: true,
-                    useSafeArea: true,
-                    builder: (_) => const _ReportBugSheet(),
-                  );
+                  final result = await context.read<PopupManager>().showBottomSheet<String>(
+                        context: context,
+                        isScrollControlled: true,
+                        useSafeArea: true,
+                        builder: (_) => const _ReportBugSheet(),
+                      );
                   if (!context.mounted) return;
                   if (result == 'submitted') {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -307,30 +309,27 @@ class SettingsScreen extends StatelessWidget {
   }
 
   void _showResetDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Reset Game Progress?'),
-        content: const Text('This will delete all your progress, items, and purchases. This action cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Game reset! Restart the app to see changes.')),
-              );
-            },
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
+    unawaited(
+      context.read<PopupManager>().showAppDialog<void>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Reset Game Progress?'),
+              content: const Text('This will delete all your progress, items, and purchases. This action cannot be undone.'),
+              actions: [
+                TextButton(onPressed: () => context.pop(), child: const Text('Cancel')),
+                FilledButton(
+                  onPressed: () {
+                    context.pop();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Game reset! Restart the app to see changes.')),
+                    );
+                  },
+                  style: FilledButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.error),
+                  child: const Text('Reset'),
+                ),
+              ],
             ),
-            child: const Text('Reset'),
           ),
-        ],
-      ),
     );
   }
 }
@@ -391,7 +390,7 @@ class _ReportBugSheetState extends State<_ReportBugSheet> {
             Row(
               children: [
                 TextButton(
-                  onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+                  onPressed: _submitting ? null : () => context.pop(),
                   child: const Text('Cancel'),
                 ),
                 const Spacer(),
@@ -437,7 +436,7 @@ class _ReportBugSheetState extends State<_ReportBugSheet> {
 
       if (!mounted) return;
       if (id != null) {
-        Navigator.of(context).pop('submitted');
+        context.pop('submitted');
       } else {
         // Fall back: allow user to copy the prepared report to clipboard for emailing
         final fallback = <String, dynamic>{

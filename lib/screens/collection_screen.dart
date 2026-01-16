@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/widgets/unique_item_glyph.dart';
+import 'package:mergeworks/services/popup_manager.dart';
 
 class CollectionScreen extends StatelessWidget {
   const CollectionScreen({super.key});
@@ -154,47 +156,43 @@ class _CollectionCard extends StatelessWidget {
   }
 
   void _showDetails(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Padding(
-        padding: AppSpacing.paddingLg,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            UniqueItemGlyph(item: item, size: 80),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              item.name,
-              style: context.textStyles.headlineMedium?.bold.copyWith(
-                color: Theme.of(context).colorScheme.primary,
+    unawaited(
+      context.read<PopupManager>().showBottomSheet<void>(
+            context: context,
+            builder: (context) => Padding(
+              padding: AppSpacing.paddingLg,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  UniqueItemGlyph(item: item, size: 80),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    item.name,
+                    style: context.textStyles.headlineMedium?.bold.copyWith(color: Theme.of(context).colorScheme.primary),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(AppRadius.lg),
+                    ),
+                    child: Text(
+                      'Tier ${item.tier}',
+                      style: context.textStyles.labelLarge?.bold.copyWith(color: Theme.of(context).colorScheme.onSecondaryContainer),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    item.isDiscovered ? item.description : 'Not yet discovered',
+                    style: context.textStyles.bodyLarge?.copyWith(color: Theme.of(context).colorScheme.onSurface),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                ],
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer,
-                borderRadius: BorderRadius.circular(AppRadius.lg),
-              ),
-              child: Text(
-                'Tier ${item.tier}',
-                style: context.textStyles.labelLarge?.bold.copyWith(
-                  color: Theme.of(context).colorScheme.onSecondaryContainer,
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              item.isDiscovered ? item.description : 'Not yet discovered',
-              style: context.textStyles.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: AppSpacing.lg),
-          ],
-        ),
-      ),
+          ),
     );
   }
 }

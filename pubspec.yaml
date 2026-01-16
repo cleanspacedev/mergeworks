@@ -7,6 +7,7 @@ environment:
   sdk: ^3.8.1
 
 dependencies:
+  connectivity_plus: ^7.0.0
   games_services: ^5.0.0
   google_mobile_ads: ^6.0.0
   in_app_purchase: ^3.0.0

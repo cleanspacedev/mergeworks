@@ -69,6 +69,14 @@ Key screens:
   - Long-press Auto-Select: If player owns the “Auto-Select” upgrade (autoSelectCount > 0), a long-press selects a connected cluster (base tier + wildcards) up to the player’s cap (3→10). If valid, it immediately triggers the normal merge pipeline.
   - After merges, GameService may spawn low-tier items near the merge location and updates achievements/quests and platform scores.
 
+- Hint / stuck-board UX rules (GameBoardScreen)
+  - Hint UI must never target “invisible”/duplicate items. The GridView renders the first item per cell using `where(...).firstOrNull`; hint/highlight selection must use the same rule (one item per coordinate).
+  - If there are no valid standard (3-item) merges remaining, the “Need a hint?” sheet should not open. Instead, show a small center popup (e.g., “No matches left”) and then allow the existing stuck-board offer flow to run.
+  - If the board is stuck and summoning cannot run (board is full), show a dedicated “No space to summon” offer that suggests a discounted Shuffle.
+
+- Shuffle ability rule
+  - Shuffle must never create/spawn new items. It only permutes the positions of the existing *visible* on-board items (one item per cell, matching the UI render rule) and sanitizes any stale duplicates so Shuffle cannot surface hidden items.
+
 - Audio usage
   - Call AudioService.maybeStartMusicFromUserGesture() on user interactions (tap/long-press) to ensure background music starts on Web.
   - Use AudioService helpers for SFX (playMergeSound, playAbilityUseSound, etc.).

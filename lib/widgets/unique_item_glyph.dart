@@ -14,28 +14,36 @@ class UniqueItemGlyph extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    // Derive glyph by TIER so all items of the same tier share the same silhouette.
-    final hash = _stableHash('tier_${item.isWildcard ? 'wild' : item.tier.toString()}');
+    // IMPORTANT: the player needs to see the actual item identity change on merge.
+    // We render the item's emoji prominently, and keep a subtle deterministic
+    // accent icon behind it for extra visual variety.
 
-    final icon = _iconPool[hash % _iconPool.length];
+    // Accent icon is derived from the item's *id* so two items of the same tier
+    // don't always look identical (without relying on color alone).
+    final hash = _stableHash(item.id);
+    final accentIcon = _iconPool[hash % _iconPool.length];
 
-    // Vibrant, high-contrast palette from theme. Color is decorative only and
-    // does NOT indicate uniqueness (icon silhouette does).
-    final colorChoices = <Color>[
-      cs.primary,
-      cs.secondary,
-      cs.tertiary,
-      cs.inversePrimary,
-      cs.error, // occasional warm accent for pop
-      cs.surfaceTint,
-    ];
+    final colorChoices = <Color>[cs.primary, cs.secondary, cs.tertiary, cs.inversePrimary, cs.surfaceTint];
     final picked = colorChoices[(item.tier - 1).abs() % colorChoices.length];
-    final iconColor = muted ? cs.onSurfaceVariant : picked;
+    final accentColor = muted ? cs.onSurfaceVariant.withValues(alpha: 0.25) : picked.withValues(alpha: 0.22);
 
-    // Special-case wildcard items for recognizability
-    final effectiveIcon = item.isWildcard ? Icons.all_inclusive : icon;
+    final emoji = item.isWildcard ? '🃏' : item.emoji;
+    // Emoji color is controlled by the system font; setting a text color can make
+    // some emoji glyphs render oddly on certain platforms. Only apply color when
+    // muted for accessibility.
+    final Color? textColor = muted ? cs.onSurfaceVariant : null;
 
-    return Icon(effectiveIcon, size: size, color: iconColor);
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Icon(accentIcon, size: size * 1.05, color: accentColor),
+        Text(
+          emoji,
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: size, height: 1.0, color: textColor),
+        ),
+      ],
+    );
   }
 }
 
