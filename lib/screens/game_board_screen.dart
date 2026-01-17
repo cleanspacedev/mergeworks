@@ -35,6 +35,8 @@ class GameBoardScreen extends StatefulWidget {
 
 class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderStateMixin {
   late ConfettiController _confettiController;
+  late final AnimationController _shakeController;
+  double _shakeIntensity = 0.0;
   GameItem? _selectedItem;
   final Set<String> _highlightedItems = {};
   final Set<String> _animatingIds = {};
@@ -51,6 +53,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   bool _noEnergyOfferShownForEpisode = false;
   Timer? _noEnergyOfferTimer;
   final Set<String> _hintedItems = {};
+  final Set<String> _almostThereItems = {};
   Timer? _hintClearTimer;
 
   String? _lastNoMovesSignature;
@@ -107,6 +110,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   void initState() {
     super.initState();
     _confettiController = ConfettiController(duration: const Duration(seconds: 2));
+    _shakeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
     _resetIdleTimer();
   }
 
@@ -179,7 +183,19 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     _spawnController?.dispose();
     _pulseController?.dispose();
     _confettiController.dispose();
+    _shakeController.dispose();
     super.dispose();
+  }
+
+  void _triggerScreenShake({required int tier, required int selectionCount, required bool reducedMotion}) {
+    if (reducedMotion) return;
+    // Subtle by default; ramps slightly with bigger merges.
+    final strength = (0.6 + (selectionCount - 3).clamp(0, 6) * 0.35 + (tier / 20.0)).clamp(0.6, 3.2);
+    _shakeIntensity = strength;
+    _shakeController
+      ..stop()
+      ..reset();
+    unawaited(_shakeController.forward());
   }
 
   void _cancelNoMovesOfferTimer() {
@@ -476,6 +492,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
               currentGems: gems,
               canSummon: canSummon,
               canAfford: canAfford,
+              canMicroShuffle: gs.canUseDailyMicroShuffle,
               cheapestGemPackLabel: cheapestGemPack?.name,
               cheapestGemPackPriceLabel: cheapestGemPriceLabel,
             ),
@@ -598,6 +615,21 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
         if (action == NoMovesOfferAction.shop) {
           context.push(AppRoutes.shop);
+          return;
+        }
+
+        if (action == NoMovesOfferAction.microShuffle) {
+          final audio = context.read<AudioService>();
+          final haptics = context.read<HapticsService>();
+          audio.playAbilityUseSound();
+          final ok = await gameService.abilityDailyMicroShuffle(tileCount: 4);
+          if (ok) {
+            haptics.onAbilityShuffle();
+            _showMessage('Micro-shuffled 4 tiles 🎲');
+            await _maybeShowNoMovesOffer(gameService, reason: 'after_micro_shuffle');
+          } else {
+            _showMessage('Micro-shuffle already used today');
+          }
           return;
         }
 
@@ -852,6 +884,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         }
         // Tap feedback
         context.read<AudioService>().playClickSound();
+        _updateAlmostTherePulse(gameService);
         return;
       }
 
@@ -861,6 +894,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         _selectedItem = item; // anchor for abilities like duplicate/clear
         _invalidMergeAttempts = 0;
         context.read<AudioService>().playClickSound();
+        _updateAlmostTherePulse(gameService);
         return;
       }
 
@@ -892,6 +926,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         _selectedItem = item;
         _invalidMergeAttempts = 0;
         context.read<AudioService>().playClickSound();
+        _updateAlmostTherePulse(gameService);
         return;
       }
 
@@ -906,6 +941,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       _selectedItem = item; // last tapped becomes primary for single-item abilities
       _invalidMergeAttempts = 0;
       context.read<AudioService>().playClickSound();
+      _updateAlmostTherePulse(gameService);
     });
   }
 
@@ -977,6 +1013,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
         ..addAll(picked);
       _selectedItem = item;
       _invalidMergeAttempts = 0;
+      _updateAlmostTherePulse(gameService);
     });
 
     // Feedback
@@ -1063,6 +1100,75 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       // Ensure _selectedItem remains valid
       _selectedItem = idToItem[anchorId];
     }
+
+    _updateAlmostTherePulse(gs);
+  }
+
+  /// Computes a faint pulse on candidate tiles when the player has selected
+  /// 2-of-3 toward a standard merge.
+  ///
+  /// IMPORTANT: This must match the GridView render rule: one visible item per
+  /// cell (first item per coordinate).
+  void _updateAlmostTherePulse(GameService gs) {
+    try {
+      if (_hintedItems.isNotEmpty) {
+        _almostThereItems.clear();
+        return;
+      }
+
+      // Only show for the standard 3-merge loop.
+      if (gs.powerMergeCharges > 0) {
+        _almostThereItems.clear();
+        return;
+      }
+
+      final selectedVisible = _visibleBoardItems(gs, excludedIds: _animatingIds).where((gi) => _highlightedItems.contains(gi.id)).toList();
+      if (selectedVisible.length != 2) {
+        _almostThereItems.clear();
+        return;
+      }
+
+      final selectedNonWild = selectedVisible.where((e) => !e.isWildcard).toList();
+      final nonWildTiers = selectedNonWild.map((e) => e.tier).toSet();
+      if (nonWildTiers.length > 1) {
+        _almostThereItems.clear();
+        return;
+      }
+      final int? baseTier = nonWildTiers.isEmpty ? null : nonWildTiers.first;
+
+      bool isEligible(GameItem gi) {
+        if (_highlightedItems.contains(gi.id)) return false;
+        if (gi.gridX == null || gi.gridY == null) return false;
+        if (gi.isWildcard) return true;
+        if (baseTier == null) return true;
+        return gi.tier == baseTier;
+      }
+
+      final Set<String> candidates = {};
+      final visibleAll = _visibleBoardItems(gs, excludedIds: _animatingIds);
+      for (final c in visibleAll) {
+        if (!isEligible(c)) continue;
+        bool adjacent = false;
+        for (final s in selectedVisible) {
+          if (_areAdjacent8(s, c)) {
+            adjacent = true;
+            break;
+          }
+        }
+        if (!adjacent) continue;
+
+        if (gs.canMerge([...selectedVisible, c])) {
+          candidates.add(c.id);
+        }
+      }
+
+      _almostThereItems
+        ..clear()
+        ..addAll(candidates);
+    } catch (e) {
+      debugPrint('Failed to update almost-there pulse: $e');
+      _almostThereItems.clear();
+    }
   }
 
   Future<void> _performMerge(GameService gameService, AudioService audioService, AchievementService achievementService, QuestService questService, HapticsService haptics) async {
@@ -1095,12 +1201,14 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       setState(() {
         _selectedItem = null;
         _highlightedItems.clear();
+        _almostThereItems.clear();
         _invalidMergeAttempts = 0; // reset on successful merge
       });
 
       // Tuned SFX and celebrations
       final reducedMotion = context.read<AccessibilityService>().reducedMotion;
       unawaited(audioService.playMergeSoundTuned(tier: newItem.tier, selectionCount: itemsToMerge.length));
+      _triggerScreenShake(tier: newItem.tier, selectionCount: itemsToMerge.length, reducedMotion: reducedMotion);
       // Only trigger screen-wide effects for merges > 3, and vary style every +2 over 3
       if (selectionCount > 3) {
         if (!reducedMotion) {
@@ -1132,6 +1240,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       final completedAchievements = await achievementService.checkProgress(gameService.playerStats);
       for (final achievement in completedAchievements) {
         await gameService.addGems(achievement.rewardGems);
+        // Also feed season progression.
+        await gameService.addSeasonXp((achievement.rewardGems * 4).clamp(5, 120));
         _showMessage('Achievement unlocked: ${achievement.title}! +${achievement.rewardGems} gems 💎');
       }
 
@@ -1139,6 +1249,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       for (final quest in completedQuests) {
         await gameService.addGems(quest.rewardGems);
         await gameService.addCoins(quest.rewardCoins);
+        await gameService.addSeasonXp(((quest.rewardCoins ~/ 10) + quest.rewardGems).clamp(5, 150));
         _showMessage('Quest completed: ${quest.title}! 🎯');
       }
 
@@ -1269,29 +1380,40 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
             onPointerMove: (_) => _registerUserInteraction(),
             child: Stack(
             children: [
-              AnimatedContainer(
-                duration: const Duration(milliseconds: 700),
-                curve: Curves.easeInOut,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: AppLevelTheme.gradientForLevel(context, gameService.currentLevel),
+              AnimatedBuilder(
+                animation: _shakeController,
+                builder: (context, child) {
+                  final t = Curves.easeOutCubic.transform(_shakeController.value);
+                  // Rapid decay; no “splashy” bounce.
+                  final amp = _shakeIntensity * (1.0 - t);
+                  final dx = (math.sin(t * math.pi * 10) * amp);
+                  final dy = (math.cos(t * math.pi * 8) * amp);
+                  return Transform.translate(offset: Offset(dx, dy), child: child);
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 700),
+                  curve: Curves.easeInOut,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: AppLevelTheme.gradientForLevel(context, gameService.currentLevel),
+                    ),
                   ),
-                ),
-                child: SafeArea(
-                  // The game UI needs top/side insets, but applying a bottom
-                  // SafeArea to the whole Column creates an empty “gap” under
-                  // the bottom controls (notably visible on iOS with the home
-                  // indicator). We instead handle the bottom inset inside the
-                  // bottom bar itself.
-                  bottom: false,
-                  child: Column(
-                    children: [
-                      _buildTopBar(context, gameService),
-                      Expanded(child: _buildGameGrid(context, gameService, audioService, achievementService, questService)),
-                      _buildBottomBar(context, gameService),
-                    ],
+                  child: SafeArea(
+                    // The game UI needs top/side insets, but applying a bottom
+                    // SafeArea to the whole Column creates an empty “gap” under
+                    // the bottom controls (notably visible on iOS with the home
+                    // indicator). We instead handle the bottom inset inside the
+                    // bottom bar itself.
+                    bottom: false,
+                    child: Column(
+                      children: [
+                        _buildTopBar(context, gameService),
+                        Expanded(child: _buildGameGrid(context, gameService, audioService, achievementService, questService)),
+                        _buildBottomBar(context, gameService),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -1396,12 +1518,12 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                 child: EnergyBar(
                   current: gameService.playerStats.energy,
                   max: gameService.playerStats.maxEnergy,
-                  onTap: () => context.push('/shop'),
+                  onTap: () => context.push(AppRoutes.shop),
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
               GestureDetector(
-                onTap: () => context.push('/level'),
+                onTap: () => context.push(AppRoutes.level),
                 child: Semantics(
                   button: true,
                   label: 'Open Level details',
@@ -1421,8 +1543,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
               ),
               const SizedBox(width: AppSpacing.sm),
               IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: () => context.push('/settings'),
+                icon: Icon(Icons.settings, color: Theme.of(context).colorScheme.onSurface),
+                onPressed: () => context.push(AppRoutes.settings),
                 style: IconButton.styleFrom(
                   backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                 ),
@@ -1435,7 +1557,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
               CurrencyDisplay(
                 icon: '💎',
                 amount: gameService.playerStats.gems,
-                onTap: () => context.push('/shop'),
+                onTap: () => context.push(AppRoutes.shop),
               ),
               const SizedBox(width: AppSpacing.sm),
               CurrencyDisplay(
@@ -1444,13 +1566,13 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
               ),
               const Spacer(),
               IconButton.outlined(
-                icon: const Icon(Icons.book),
-                onPressed: () => context.push('/collection'),
+                icon: Icon(Icons.book, color: Theme.of(context).colorScheme.onSurface),
+                onPressed: () => context.push(AppRoutes.collection),
                 tooltip: 'Collection',
               ),
               IconButton.outlined(
-                icon: const Icon(Icons.emoji_events),
-                onPressed: () => context.push('/achievements'),
+                icon: Icon(Icons.emoji_events, color: Theme.of(context).colorScheme.onSurface),
+                onPressed: () => context.push(AppRoutes.achievements),
                 tooltip: 'Achievements',
               ),
             ],
@@ -1511,6 +1633,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                       child: GridItemWidget(
                         item: item,
                         isHighlighted: _highlightedItems.contains(item.id) || _hintedItems.contains(item.id),
+                        isHintCandidate: _almostThereItems.contains(item.id),
                         onTap: () => _onItemTap(item, gameService),
                         onLongPress: () => _onItemLongPress(item, gameService),
                       ),
@@ -1762,7 +1885,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
               ),
               const SizedBox(width: AppSpacing.sm),
               FilledButton.tonalIcon(
-                onPressed: () => context.push('/daily-spin'),
+                onPressed: () => context.push(AppRoutes.dailySpin),
                 icon: Icon(Icons.casino, color: Theme.of(context).colorScheme.onSecondaryContainer, size: 26),
                 label: Text('Spin', style: context.textStyles.titleMedium?.bold.copyWith(color: Theme.of(context).colorScheme.onSecondaryContainer)),
                 style: FilledButton.styleFrom(

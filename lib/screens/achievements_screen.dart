@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/achievement_service.dart';
 import 'package:mergeworks/services/quest_service.dart';
+import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/models/achievement.dart';
 import 'package:mergeworks/models/daily_quest.dart';
 import 'package:mergeworks/theme.dart';
@@ -13,7 +14,7 @@ class AchievementsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Achievements & Quests'),
@@ -26,6 +27,8 @@ class AchievementsScreen extends StatelessWidget {
             tabs: const [
               Tab(text: 'Achievements', icon: Icon(Icons.emoji_events)),
               Tab(text: 'Daily Quests', icon: Icon(Icons.assignment)),
+              Tab(text: 'Events', icon: Icon(Icons.local_fire_department)),
+              Tab(text: 'Season', icon: Icon(Icons.auto_awesome)),
             ],
             indicatorColor: Theme.of(context).colorScheme.primary,
           ),
@@ -34,6 +37,8 @@ class AchievementsScreen extends StatelessWidget {
           children: [
             _AchievementsTab(),
             _QuestsTab(),
+            _EventQuestsTab(),
+            _SeasonTab(),
           ],
         ),
       ),
@@ -249,6 +254,156 @@ class _QuestsTab extends StatelessWidget {
           padding: AppSpacing.paddingMd,
           itemCount: quests.length,
           itemBuilder: (context, index) => _QuestCard(quest: quests[index]),
+        );
+      },
+    );
+  }
+}
+
+class _EventQuestsTab extends StatelessWidget {
+  const _EventQuestsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<QuestService>(
+      builder: (context, service, child) {
+        final quests = service.activeEventQuests;
+        if (quests.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.local_fire_department, size: 80, color: Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.5)),
+                const SizedBox(height: AppSpacing.md),
+                Text('No active events', style: context.textStyles.titleLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                const SizedBox(height: 6),
+                Text('Check back next week!', style: context.textStyles.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: AppSpacing.paddingMd,
+          itemCount: quests.length,
+          itemBuilder: (context, index) => _QuestCard(quest: quests[index]),
+        );
+      },
+    );
+  }
+}
+
+class _SeasonTab extends StatelessWidget {
+  const _SeasonTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<GameService>(
+      builder: (context, gs, child) {
+        final stats = gs.playerStats;
+        final cs = Theme.of(context).colorScheme;
+
+        int xpNeededForNext(int level) {
+          final l = level.clamp(1, 999);
+          if (l <= 5) return 60 + l * 20;
+          return 160 + (l - 5) * 35;
+        }
+
+        final needed = xpNeededForNext(stats.seasonLevel);
+        final progress = needed <= 0 ? 0.0 : (stats.seasonXp / needed).clamp(0.0, 1.0);
+
+        return ListView(
+          padding: AppSpacing.paddingMd,
+          children: [
+            Container(
+              padding: AppSpacing.paddingMd,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [cs.primaryContainer, cs.tertiaryContainer]),
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.auto_awesome, color: cs.onPrimaryContainer),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text('Season Track', style: context.textStyles.titleLarge?.bold.copyWith(color: cs.onPrimaryContainer))),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(color: cs.surface.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(AppRadius.lg)),
+                        child: Text('Lv ${stats.seasonLevel}', style: context.textStyles.labelLarge?.bold.copyWith(color: cs.onPrimaryContainer)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 10,
+                      backgroundColor: cs.surfaceContainerHighest.withValues(alpha: 0.55),
+                      valueColor: AlwaysStoppedAnimation(cs.primary),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text('${stats.seasonXp} / $needed XP', style: context.textStyles.labelMedium?.withColor(cs.onPrimaryContainer.withValues(alpha: 0.9))),
+                  const SizedBox(height: 4),
+                  Text('Earn XP from merges and quests. Level-ups grant coins (and gems every 5 levels).', style: context.textStyles.bodySmall?.withColor(cs.onPrimaryContainer.withValues(alpha: 0.9))),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              padding: AppSpacing.paddingMd,
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.18)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.school_outlined, color: cs.secondary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Item Mastery', style: context.textStyles.titleMedium?.bold.withColor(cs.onSurface)),
+                        const SizedBox(height: 2),
+                        Text('Level ${stats.masteryLevel} • +${((stats.masteryLevel - 1).clamp(0, 50))}% coins', style: context.textStyles.bodySmall?.withColor(cs.onSurfaceVariant)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Container(
+              padding: AppSpacing.paddingMd,
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.18)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.home_work_outlined, color: cs.tertiary),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text('Town Upgrades', style: context.textStyles.titleMedium?.bold.withColor(cs.onSurface))),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text('Coin bonus: Lv ${stats.townCoinBonusLevel}  •  Energy cap: Lv ${stats.townEnergyCapLevel}', style: context.textStyles.bodySmall?.withColor(cs.onSurfaceVariant)),
+                  const SizedBox(height: 6),
+                  Text('Upgrade these in the Shop using coins.', style: context.textStyles.bodySmall?.withColor(cs.onSurfaceVariant)),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );

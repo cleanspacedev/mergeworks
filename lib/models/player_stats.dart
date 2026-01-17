@@ -18,6 +18,19 @@ class PlayerStats {
   final int bombRunes; // clear 3x3 area consumable
   final int tierUpTokens; // upgrade item by +1 tier consumable
   final int autoSelectCount; // permanent: long-press selects up to this many items (0=disabled)
+
+  // --- Meta progression ---
+  final int seasonXp;
+  final int seasonLevel;
+  final int masteryXp;
+  final int masteryLevel;
+
+  // Town / workshop upgrades (simple sink)
+  final int townCoinBonusLevel; // increases coins gained from merges
+  final int townEnergyCapLevel; // increases max energy
+
+  // Once-per-day skill escape
+  final DateTime? lastMicroShuffleAt;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -39,6 +52,13 @@ class PlayerStats {
     this.bombRunes = 0,
     this.tierUpTokens = 0,
     this.autoSelectCount = 0,
+    this.seasonXp = 0,
+    this.seasonLevel = 1,
+    this.masteryXp = 0,
+    this.masteryLevel = 1,
+    this.townCoinBonusLevel = 0,
+    this.townEnergyCapLevel = 0,
+    this.lastMicroShuffleAt,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) : lastEnergyUpdate = lastEnergyUpdate ?? DateTime.now(),
@@ -63,6 +83,13 @@ class PlayerStats {
     int? bombRunes,
     int? tierUpTokens,
     int? autoSelectCount,
+    int? seasonXp,
+    int? seasonLevel,
+    int? masteryXp,
+    int? masteryLevel,
+    int? townCoinBonusLevel,
+    int? townEnergyCapLevel,
+    DateTime? lastMicroShuffleAt,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => PlayerStats(
@@ -83,6 +110,13 @@ class PlayerStats {
     bombRunes: bombRunes ?? this.bombRunes,
     tierUpTokens: tierUpTokens ?? this.tierUpTokens,
     autoSelectCount: autoSelectCount ?? this.autoSelectCount,
+    seasonXp: seasonXp ?? this.seasonXp,
+    seasonLevel: seasonLevel ?? this.seasonLevel,
+    masteryXp: masteryXp ?? this.masteryXp,
+    masteryLevel: masteryLevel ?? this.masteryLevel,
+    townCoinBonusLevel: townCoinBonusLevel ?? this.townCoinBonusLevel,
+    townEnergyCapLevel: townEnergyCapLevel ?? this.townEnergyCapLevel,
+    lastMicroShuffleAt: lastMicroShuffleAt ?? this.lastMicroShuffleAt,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -105,6 +139,13 @@ class PlayerStats {
     'bombRunes': bombRunes,
     'tierUpTokens': tierUpTokens,
     'autoSelectCount': autoSelectCount,
+    'seasonXp': seasonXp,
+    'seasonLevel': seasonLevel,
+    'masteryXp': masteryXp,
+    'masteryLevel': masteryLevel,
+    'townCoinBonusLevel': townCoinBonusLevel,
+    'townEnergyCapLevel': townEnergyCapLevel,
+    'lastMicroShuffleAt': lastMicroShuffleAt != null ? Timestamp.fromDate(lastMicroShuffleAt!) : null,
     'createdAt': Timestamp.fromDate(createdAt),
     'updatedAt': Timestamp.fromDate(updatedAt),
   };
@@ -134,6 +175,13 @@ class PlayerStats {
       bombRunes: json['bombRunes'] ?? 0,
       tierUpTokens: json['tierUpTokens'] ?? 0,
       autoSelectCount: json['autoSelectCount'] ?? 0,
+      seasonXp: json['seasonXp'] ?? 0,
+      seasonLevel: json['seasonLevel'] ?? 1,
+      masteryXp: json['masteryXp'] ?? 0,
+      masteryLevel: json['masteryLevel'] ?? 1,
+      townCoinBonusLevel: json['townCoinBonusLevel'] ?? 0,
+      townEnergyCapLevel: json['townEnergyCapLevel'] ?? 0,
+      lastMicroShuffleAt: json['lastMicroShuffleAt'] != null ? parseDate(json['lastMicroShuffleAt']) : null,
       createdAt: parseDate(json['createdAt']),
       updatedAt: parseDate(json['updatedAt']),
     );

@@ -1007,12 +1007,23 @@ class GameService extends ChangeNotifier {
     final discoveredKey = 'tier_$newTier';
     if (!discovered.contains(discoveredKey)) discovered.add(discoveredKey);
 
-    _playerStats = _playerStats.copyWith(
+    final now = DateTime.now();
+
+    // --- Meta progression: coins + mastery + season XP ---
+    final coinsEarned = _coinsForMerge(resultingTier: newTier, selectionCount: items.length);
+    final masteryDelta = _masteryXpForMerge(resultingTier: newTier, selectionCount: items.length);
+    final seasonDelta = _seasonXpForMerge(resultingTier: newTier, selectionCount: items.length);
+
+    final updated = _playerStats.copyWith(
       totalMerges: _playerStats.totalMerges + 1,
       highestTier: newTier > _playerStats.highestTier ? newTier : _playerStats.highestTier,
       discoveredItems: discovered,
-      updatedAt: DateTime.now(),
+      coins: _playerStats.coins + coinsEarned,
+      updatedAt: now,
     );
+
+    _playerStats = _applyMasteryXp(updated, masteryDelta, now: now);
+    _playerStats = _applySeasonXp(_playerStats, seasonDelta, now: now);
 
     // Consume a power merge charge if this was a 2-item merge
     if (items.length == 2 && _powerMergeCharges > 0) {
@@ -1119,6 +1130,198 @@ class GameService extends ChangeNotifier {
     );
     await _saveState();
     notifyListeners();
+  }
+
+  Future<void> addSeasonXp(int amount) async {
+    final now = DateTime.now();
+    _playerStats = _applySeasonXp(_playerStats, amount, now: now);
+    await _saveState();
+    notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------------
+  // META PROGRESSION HELPERS
+  // ---------------------------------------------------------------------------
+
+  double get _coinBonusMultiplier {
+    // Mastery: 1% per level above 1 (capped).
+    final mastery = (_playerStats.masteryLevel - 1).clamp(0, 50);
+    // Town upgrade: 3% per level.
+    final town = (_playerStats.townCoinBonusLevel).clamp(0, 20);
+    final bonusPct = (mastery * 0.01) + (town * 0.03);
+    return (1.0 + bonusPct).clamp(1.0, 2.5);
+  }
+
+  int _coinsForMerge({required int resultingTier, required int selectionCount}) {
+    // Small, steady drip — keeps the shop loop alive without overpowering.
+    final base = 4 + (resultingTier * 2) + ((selectionCount - 3).clamp(0, 6) * 2);
+    return (base * _coinBonusMultiplier).round();
+  }
+
+  int _masteryXpForMerge({required int resultingTier, required int selectionCount}) {
+    final base = 3 + resultingTier + (selectionCount - 3).clamp(0, 8);
+    return base.clamp(1, 40);
+  }
+
+  int _seasonXpForMerge({required int resultingTier, required int selectionCount}) {
+    // Slightly slower than mastery; meant for a longer track.
+    final base = 2 + (resultingTier ~/ 2) + (selectionCount - 3).clamp(0, 8);
+    return base.clamp(1, 25);
+  }
+
+  int _seasonXpNeededForNextLevel(int level) {
+    // Fast early, slower later.
+    final l = level.clamp(1, 999);
+    if (l <= 5) return 60 + l * 20; // 80..160
+    return 160 + (l - 5) * 35;
+  }
+
+  PlayerStats _applySeasonXp(PlayerStats stats, int delta, {required DateTime now}) {
+    if (delta <= 0) return stats;
+    int level = stats.seasonLevel <= 0 ? 1 : stats.seasonLevel;
+    int xp = stats.seasonXp + delta;
+    int coins = stats.coins;
+    int gems = stats.gems;
+
+    bool leveledUp = false;
+    while (xp >= _seasonXpNeededForNextLevel(level)) {
+      xp -= _seasonXpNeededForNextLevel(level);
+      level++;
+      leveledUp = true;
+
+      // Lightweight reward cadence.
+      coins += 60 + level * 10;
+      if (level % 5 == 0) gems += 10;
+      if (level % 10 == 0) coins += 250;
+    }
+
+    if (!leveledUp && xp == stats.seasonXp) return stats;
+    return stats.copyWith(seasonLevel: level, seasonXp: xp, coins: coins, gems: gems, updatedAt: now);
+  }
+
+  PlayerStats _applyMasteryXp(PlayerStats stats, int delta, {required DateTime now}) {
+    if (delta <= 0) return stats;
+    int level = stats.masteryLevel <= 0 ? 1 : stats.masteryLevel;
+    int xp = stats.masteryXp + delta;
+    int maxEnergy = stats.maxEnergy;
+
+    int neededForNext(int l) {
+      if (l <= 3) return 80 + l * 40;
+      return 200 + (l - 3) * 70;
+    }
+
+    bool leveledUp = false;
+    while (xp >= neededForNext(level)) {
+      xp -= neededForNext(level);
+      level++;
+      leveledUp = true;
+
+      // Permanent perk: occasional max energy increases.
+      if (level % 3 == 0) {
+        maxEnergy = (maxEnergy + 5).clamp(50, 9999);
+      }
+    }
+
+    if (!leveledUp && xp == stats.masteryXp) return stats;
+    // If max energy increased, ensure current energy isn't above cap.
+    final energy = stats.energy.clamp(0, maxEnergy);
+    return stats.copyWith(masteryLevel: level, masteryXp: xp, maxEnergy: maxEnergy, energy: energy, updatedAt: now);
+  }
+
+  // ---------------------------------------------------------------------------
+  // DAILY MICRO-SHUFFLE (skill escape)
+  // ---------------------------------------------------------------------------
+
+  bool get canUseDailyMicroShuffle {
+    final last = _playerStats.lastMicroShuffleAt;
+    if (last == null) return true;
+    final now = DateTime.now();
+    return !(last.year == now.year && last.month == now.month && last.day == now.day);
+  }
+
+  Future<bool> abilityDailyMicroShuffle({int tileCount = 4}) async {
+    if (!canUseDailyMicroShuffle) return false;
+    try {
+      final visibleByCell = <String, GameItem>{};
+      final duplicateIds = <String>{};
+      for (final gi in _gridItems) {
+        final x = gi.gridX;
+        final y = gi.gridY;
+        if (x == null || y == null) continue;
+        final key = '$x,$y';
+        if (visibleByCell.containsKey(key)) {
+          duplicateIds.add(gi.id);
+        } else {
+          visibleByCell[key] = gi;
+        }
+      }
+
+      final onBoard = visibleByCell.values.toList();
+      if (onBoard.length < tileCount) {
+        debugPrint('Micro-shuffle skipped: not enough visible tiles (${onBoard.length}/$tileCount).');
+        return false;
+      }
+
+      onBoard.shuffle(_rand);
+      final chosen = onBoard.take(tileCount).toList();
+
+      final indexById = <String, int>{for (var i = 0; i < _gridItems.length; i++) _gridItems[i].id: i};
+
+      // Sanitize duplicates so micro-shuffle can't surface hidden items later.
+      for (final dupId in duplicateIds) {
+        final idx = indexById[dupId];
+        if (idx == null) continue;
+        _gridItems[idx] = _gridItems[idx].copyWith(gridX: null, gridY: null);
+      }
+
+      final positions = chosen.map((e) => {'x': e.gridX!, 'y': e.gridY!}).toList();
+      positions.shuffle(_rand);
+      for (int i = 0; i < chosen.length; i++) {
+        final item = chosen[i];
+        final idx = indexById[item.id]!;
+        _gridItems[idx] = _gridItems[idx].copyWith(gridX: positions[i]['x'], gridY: positions[i]['y']);
+      }
+
+      final now = DateTime.now();
+      _playerStats = _playerStats.copyWith(lastMicroShuffleAt: now, updatedAt: now);
+      await _saveState();
+      notifyListeners();
+      debugPrint('Daily micro-shuffle used. Tiles moved: ${chosen.length}.');
+      return true;
+    } catch (e) {
+      debugPrint('Daily micro-shuffle failed: $e');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // TOWN / WORKSHOP UPGRADES
+  // ---------------------------------------------------------------------------
+
+  int costForTownCoinBonusUpgrade(int nextLevel) => 250 + nextLevel.clamp(0, 20) * 180;
+  int costForTownEnergyCapUpgrade(int nextLevel) => 300 + nextLevel.clamp(0, 20) * 220;
+
+  Future<bool> purchaseTownCoinBonusUpgrade() async {
+    final next = _playerStats.townCoinBonusLevel + 1;
+    final cost = costForTownCoinBonusUpgrade(next);
+    if (!_spendCoinsIfPossible(cost)) return false;
+    final now = DateTime.now();
+    _playerStats = _playerStats.copyWith(townCoinBonusLevel: next, updatedAt: now);
+    await _saveState();
+    notifyListeners();
+    return true;
+  }
+
+  Future<bool> purchaseTownEnergyCapUpgrade() async {
+    final next = _playerStats.townEnergyCapLevel + 1;
+    final cost = costForTownEnergyCapUpgrade(next);
+    if (!_spendCoinsIfPossible(cost)) return false;
+    final now = DateTime.now();
+    final newMax = (_playerStats.maxEnergy + 10).clamp(50, 9999);
+    _playerStats = _playerStats.copyWith(townEnergyCapLevel: next, maxEnergy: newMax, energy: _playerStats.energy.clamp(0, newMax), updatedAt: now);
+    await _saveState();
+    notifyListeners();
+    return true;
   }
 
   // ===================== Abilities & Coins =====================

@@ -72,6 +72,8 @@ class ShopScreen extends StatelessWidget {
                 gameService,
               ),
               const SizedBox(height: AppSpacing.lg),
+              _TownUpgradesSection(gameService: gameService),
+              const SizedBox(height: AppSpacing.lg),
               _buildSection(
                 context,
                 'Specials ✨',
@@ -221,6 +223,155 @@ class ShopScreen extends StatelessWidget {
             );
             return null;
           }),
+    );
+  }
+}
+
+class _TownUpgradesSection extends StatelessWidget {
+  final GameService gameService;
+
+  const _TownUpgradesSection({required this.gameService});
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final stats = gameService.playerStats;
+    final coinNext = stats.townCoinBonusLevel + 1;
+    final energyNext = stats.townEnergyCapLevel + 1;
+    final coinCost = gameService.costForTownCoinBonusUpgrade(coinNext);
+    final energyCost = gameService.costForTownEnergyCapUpgrade(energyNext);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Workshop Upgrades 🏗️', style: context.textStyles.headlineSmall?.bold.copyWith(color: cs.primary)),
+        const SizedBox(height: AppSpacing.xs),
+        Text('Permanent upgrades (paid with coins)', style: context.textStyles.bodyMedium?.copyWith(color: cs.onSurfaceVariant)),
+        const SizedBox(height: AppSpacing.md),
+        _TownUpgradeCard(
+          title: 'Coin Bonus',
+          subtitle: 'Earn more coins from every merge',
+          icon: Icons.savings_outlined,
+          levelLabel: 'Lv ${stats.townCoinBonusLevel}',
+          costCoins: coinCost,
+          canAfford: stats.coins >= coinCost,
+          accent: cs.secondary,
+          onBuy: () async {
+            context.read<AudioService>().maybeStartMusicFromUserGesture();
+            final ok = await context.read<GameService>().purchaseTownCoinBonusUpgrade();
+            if (ok) {
+              context.read<HapticsService>().successSoft();
+              context.read<AudioService>().playSuccessSound();
+              if (context.mounted) {
+                unawaited(context.read<PopupManager>().showCenterToast(context, message: 'Upgraded Coin Bonus!', icon: Icons.savings_outlined));
+              }
+            } else {
+              if (context.mounted) {
+                unawaited(context.read<PopupManager>().showCenterToast(context, message: 'Not enough coins', icon: Icons.error_outline));
+              }
+            }
+          },
+        ),
+        const SizedBox(height: AppSpacing.md),
+        _TownUpgradeCard(
+          title: 'Energy Cap',
+          subtitle: 'Increase max energy by +10',
+          icon: Icons.bolt,
+          levelLabel: 'Lv ${stats.townEnergyCapLevel}',
+          costCoins: energyCost,
+          canAfford: stats.coins >= energyCost,
+          accent: cs.tertiary,
+          onBuy: () async {
+            context.read<AudioService>().maybeStartMusicFromUserGesture();
+            final ok = await context.read<GameService>().purchaseTownEnergyCapUpgrade();
+            if (ok) {
+              context.read<HapticsService>().successSoft();
+              context.read<AudioService>().playSuccessSound();
+              if (context.mounted) {
+                unawaited(context.read<PopupManager>().showCenterToast(context, message: 'Energy cap increased!', icon: Icons.bolt));
+              }
+            } else {
+              if (context.mounted) {
+                unawaited(context.read<PopupManager>().showCenterToast(context, message: 'Not enough coins', icon: Icons.error_outline));
+              }
+            }
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _TownUpgradeCard extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final String levelLabel;
+  final int costCoins;
+  final bool canAfford;
+  final Color accent;
+  final Future<void> Function() onBuy;
+
+  const _TownUpgradeCard({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.levelLabel,
+    required this.costCoins,
+    required this.canAfford,
+    required this.accent,
+    required this.onBuy,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: accent.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+            ),
+            child: Icon(icon, color: accent),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text(title, style: context.textStyles.titleMedium?.bold.withColor(cs.onSurface))),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(color: cs.surface.withValues(alpha: 0.7), borderRadius: BorderRadius.circular(AppRadius.lg)),
+                      child: Text(levelLabel, style: context.textStyles.labelMedium?.bold.withColor(cs.onSurface)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(subtitle, style: context.textStyles.bodySmall?.withColor(cs.onSurfaceVariant)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton(
+            onPressed: canAfford ? () => unawaited(onBuy()) : null,
+            style: FilledButton.styleFrom(backgroundColor: accent, foregroundColor: cs.onSecondary),
+            child: Text('🪙 $costCoins', style: context.textStyles.labelLarge?.bold.copyWith(color: cs.onSecondary)),
+          ),
+        ],
+      ),
     );
   }
 }

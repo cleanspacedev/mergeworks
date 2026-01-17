@@ -206,6 +206,21 @@ class AudioService extends ChangeNotifier {
     final variants = ['audio/FX/merge1.wav', 'audio/FX/merge2.wav', 'audio/FX/merge3.wav'];
     final pick = variants[((tier <= 0 ? 1 : tier) - 1) % variants.length];
     await _playSfx(pick, volume: 0.95, caption: 'Merge Tier $tier', playbackRate: rate);
+
+    // Layer a subtle sparkle for bigger / higher-tier merges.
+    // We keep it very light so it doesn't become noisy.
+    try {
+      final big = selectionCount >= 5;
+      final high = tier >= 10;
+      if (big || high) {
+        final double layerVolume = (big ? 0.28 : 0.18);
+        final double layerRate = (rate * (high ? 1.08 : 1.03)).clamp(0.95, 1.25);
+        // Reuse an existing asset to avoid adding new dependencies/assets.
+        await _playSfx('audio/FX/levelUp.wav', volume: layerVolume, caption: null, playbackRate: layerRate);
+      }
+    } catch (e) {
+      debugPrint('Merge SFX layer failed: $e');
+    }
   }
 
   Future<void> playSuccessSound() async {

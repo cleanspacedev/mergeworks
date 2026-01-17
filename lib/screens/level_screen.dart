@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/nav.dart';
 import 'package:provider/provider.dart';
 import 'package:mergeworks/models/game_item.dart';
 
@@ -57,7 +58,7 @@ class LevelScreen extends StatelessWidget {
                     const Spacer(),
                     FilledButton.icon(
                       icon: const Icon(Icons.book),
-                      onPressed: () => context.push('/collection'),
+                      onPressed: () => context.push(AppRoutes.collection),
                       label: const Text('View Collection'),
                     ),
                   ],

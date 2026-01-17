@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mergeworks/theme.dart';
 
 enum NoMovesOfferAction {
+  microShuffle,
   summon,
   shop,
   later,
@@ -17,6 +18,7 @@ class NoMovesOfferSheet extends StatelessWidget {
   final bool canAfford;
   final String? cheapestGemPackLabel;
   final String? cheapestGemPackPriceLabel;
+  final bool canMicroShuffle;
 
   const NoMovesOfferSheet({
     super.key,
@@ -28,6 +30,7 @@ class NoMovesOfferSheet extends StatelessWidget {
     required this.canAfford,
     this.cheapestGemPackLabel,
     this.cheapestGemPackPriceLabel,
+    required this.canMicroShuffle,
   });
 
   @override
@@ -123,6 +126,23 @@ class NoMovesOfferSheet extends StatelessWidget {
                   ),
                   style: FilledButton.styleFrom(backgroundColor: cs.tertiary),
                 ),
+
+                if (canMicroShuffle) ...[
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () => context.pop(NoMovesOfferAction.microShuffle),
+                    icon: Icon(Icons.casino_outlined, color: onSurface),
+                    label: Text(
+                      'Try a micro-shuffle (free today)',
+                      style: context.textStyles.titleSmall?.semiBold.withColor(onSurface),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: onSurface,
+                      side: BorderSide(color: cs.outline.withValues(alpha: 0.35)),
+                    ),
+                  ),
+                ],
 
                 if (canSummon && !canAfford && cheapestGemPackLabel != null) ...[
                   const SizedBox(height: 10),

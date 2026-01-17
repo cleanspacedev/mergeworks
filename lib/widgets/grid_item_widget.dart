@@ -8,6 +8,9 @@ import 'package:mergeworks/services/accessibility_service.dart';
 class GridItemWidget extends StatefulWidget {
   final GameItem item;
   final bool isHighlighted;
+  /// When true, the cell shows a subtle pulse to indicate it could complete
+  /// a merge (e.g. player has 2-of-3 selected).
+  final bool isHintCandidate;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -15,6 +18,7 @@ class GridItemWidget extends StatefulWidget {
     super.key,
     required this.item,
     this.isHighlighted = false,
+    this.isHintCandidate = false,
     this.onTap,
     this.onLongPress,
   });
@@ -49,6 +53,9 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
   Widget build(BuildContext context) {
     final size = _getItemSize(widget.item.tier);
     final a11y = context.watch<AccessibilityService>();
+    final cs = Theme.of(context).colorScheme;
+
+    final bool shouldPulse = widget.isHintCandidate && !widget.isHighlighted;
     
     return Semantics(
       label: 'Tier ${widget.item.tier} item',
@@ -63,7 +70,7 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
         onTap: widget.onTap,
         onLongPress: widget.onLongPress,
         child: AnimatedScale(
-          scale: widget.isHighlighted ? 1.18 : 1.0,
+          scale: widget.isHighlighted ? 1.18 : (shouldPulse && !a11y.reducedMotion ? 1.02 : 1.0),
           duration: Duration(milliseconds: a11y.reducedMotion ? 0 : 200),
           child: Container(
             decoration: BoxDecoration(
@@ -72,33 +79,63 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
                 end: Alignment.bottomRight,
                 colors: widget.isHighlighted
                     ? [
-                      Theme.of(context).colorScheme.secondary.withValues(alpha: 0.3),
-                      Theme.of(context).colorScheme.tertiary.withValues(alpha: 0.3),
+                      cs.secondary.withValues(alpha: 0.3),
+                      cs.tertiary.withValues(alpha: 0.3),
                     ]
                     : [
-                      Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.5),
-                      Theme.of(context).colorScheme.surfaceContainerHighest,
+                      cs.primaryContainer.withValues(alpha: 0.5),
+                      cs.surfaceContainerHighest,
                     ],
               ),
               borderRadius: BorderRadius.circular(AppRadius.md),
               border: widget.isHighlighted
                   ? Border.all(
-                      color: Theme.of(context).colorScheme.secondary,
+                      color: cs.secondary,
                       width: a11y.highContrast ? 3 : 2,
                     )
-                  : null,
+                  : (shouldPulse ? Border.all(color: cs.secondary.withValues(alpha: 0.25), width: 1.5) : null),
               boxShadow: widget.isHighlighted
                   ? [
                       BoxShadow(
-                        color: Theme.of(context).colorScheme.secondary.withValues(alpha: 0.4),
+                        color: cs.secondary.withValues(alpha: 0.4),
                         blurRadius: 8,
                         spreadRadius: 2,
                       ),
                     ]
-                  : null,
+                  : (shouldPulse
+                      ? [
+                          BoxShadow(
+                            color: cs.secondary.withValues(alpha: a11y.reducedMotion ? 0.0 : 0.18),
+                            blurRadius: 10,
+                            spreadRadius: 0,
+                          ),
+                        ]
+                      : null),
             ),
             child: Stack(
               children: [
+                if (shouldPulse && !a11y.reducedMotion)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: FadeTransition(
+                        opacity: Tween<double>(begin: 0.18, end: 0.0).animate(
+                          CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+                        ),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(AppRadius.md),
+                            gradient: RadialGradient(
+                              colors: [
+                                cs.secondary.withValues(alpha: 0.35),
+                                cs.secondary.withValues(alpha: 0.0),
+                              ],
+                              stops: const [0.0, 0.85],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 Center(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
@@ -117,7 +154,7 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
                         Text(
                           'T${widget.item.tier}',
                           style: context.textStyles.labelSmall?.bold.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: cs.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -128,7 +165,7 @@ class _GridItemWidgetState extends State<GridItemWidget> with SingleTickerProvid
                   Positioned(
                     top: 6,
                     right: 6,
-                    child: Icon(Icons.texture, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    child: Icon(Icons.texture, size: 16, color: cs.onSurfaceVariant),
                   ),
               ],
             ),
