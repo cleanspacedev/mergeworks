@@ -1,5 +1,5 @@
- import 'package:flutter/foundation.dart';
- import 'dart:async';
+import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/models/player_stats.dart';
@@ -7,6 +7,11 @@ import 'package:mergeworks/services/firebase_service.dart';
 import 'package:mergeworks/services/game_platform_service.dart';
 import 'package:mergeworks/services/game_platform_config.dart';
 import 'dart:math';
+
+enum GameMode {
+  normal,
+  dailyChallenge,
+}
 
 @immutable
 class MoveAvailability {
@@ -57,6 +62,47 @@ class GameService extends ChangeNotifier {
   int _idSeq = 0;
   String _makeId(int tier) => 'gi_${DateTime.now().microsecondsSinceEpoch}_${_idSeq++}_t$tier';
   final Random _rand = Random();
+  Random _dailyRand = Random(1);
+  Random get _rng => _gameMode == GameMode.dailyChallenge ? _dailyRand : _rand;
+
+  GameMode _gameMode = GameMode.normal;
+  GameMode get gameMode => _gameMode;
+  bool get isInDailyChallenge => _gameMode == GameMode.dailyChallenge;
+
+  // --- Daily Challenge state (separate game mode) ---
+  String? _dailyKey;
+  int? _dailySeed;
+  DateTime? _dailyStartedAt;
+  DateTime? _dailyCompletedAt;
+  int _dailyMoveCount = 0;
+  List<int> _dailyUpcomingTiers = [];
+  bool _dailyPromptedThisSession = false;
+  int _dailyPendingRewardGems = 0;
+
+  // Snapshots of the normal mode state, restored when the daily challenge ends.
+  PlayerStats? _normalSnapshotStats;
+  List<GameItem>? _normalSnapshotGrid;
+
+  String? get dailyChallengeKey => _dailyKey;
+  DateTime? get dailyChallengeCompletedAt => _dailyCompletedAt;
+  int get dailyMoveCount => _dailyMoveCount;
+  List<int> get dailyUpcomingPreview => _dailyUpcomingTiers.take(5).toList(growable: false);
+
+  static String _dateKey(DateTime dt) {
+    final d = DateTime(dt.year, dt.month, dt.day);
+    String two(int v) => v < 10 ? '0$v' : '$v';
+    return '${d.year}${two(d.month)}${two(d.day)}';
+  }
+
+  static int _fnv1a32(String input) {
+    const int prime = 0x01000193;
+    int hash = 0x811C9DC5;
+    for (final codeUnit in input.codeUnits) {
+      hash ^= (codeUnit & 0xFF);
+      hash = (hash * prime) & 0xFFFFFFFF;
+    }
+    return hash;
+  }
   
   // Ephemeral ability state (not persisted)
   int _powerMergeCharges = 0;
@@ -72,6 +118,16 @@ class GameService extends ChangeNotifier {
   List<GameItem> get gridItems => _gridItems;
   bool get isLoading => _isLoading;
   int get powerMergeCharges => _powerMergeCharges;
+
+  bool get shouldPromptDailyChallenge {
+    if (_dailyPromptedThisSession) return false;
+    if (_firebaseService == null || _firebaseService?.isAuthenticated != true) return false;
+    // Only prompt in normal mode.
+    if (isInDailyChallenge) return false;
+    final today = _dateKey(DateTime.now());
+    if (_dailyKey != today) return false;
+    return _dailyCompletedAt == null;
+  }
 
   /// Snapshot of whether the player has any merge moves available.
   ///
@@ -188,6 +244,16 @@ class GameService extends ChangeNotifier {
   static final List<int> _levelTierCounts = [18, 10, 10, 10, 10, 10]; // extendable
   static late final Map<int, Map<String, dynamic>> _itemTemplates = _buildTemplates();
   static int get totalTiers => _itemTemplates.length;
+
+  String emojiForTier(int tier) {
+    try {
+      final t = _itemTemplates[tier];
+      final e = t?['emoji']?.toString();
+      return (e == null || e.isEmpty) ? '✨' : e;
+    } catch (_) {
+      return '✨';
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // LEVEL PROGRESSION
@@ -473,6 +539,10 @@ class GameService extends ChangeNotifier {
 
       _updateEnergy();
       await _checkDailyLogin();
+
+      // Daily Challenge metadata (whether today's is completed)
+      await _refreshDailyChallengeStatus();
+
       // Submit initial scores to platform leaderboards (best-effort)
       try {
         await _platformService?.submitAllScores(
@@ -519,6 +589,219 @@ class GameService extends ChangeNotifier {
       _fillMatchingLowest(count: 3 - _countOfTier(1));
     }
     _saveState();
+  }
+
+  Future<void> _refreshDailyChallengeStatus() async {
+    if (_firebaseService == null || !_firebaseService!.isAuthenticated) return;
+    try {
+      final userId = _userId;
+      if (userId == null || userId.isEmpty) return;
+      final key = _dateKey(DateTime.now());
+      _dailyKey = key;
+      final doc = await _firebaseService!.firestore
+          .collection('player_stats')
+          .doc(userId)
+          .collection('daily_challenges')
+          .doc(key)
+          .get()
+          .timeout(const Duration(seconds: 5));
+      if (!doc.exists) {
+        _dailyCompletedAt = null;
+        _dailyStartedAt = null;
+        _dailyMoveCount = 0;
+        _dailySeed = null;
+        _dailyUpcomingTiers = [];
+        return;
+      }
+      final data = doc.data();
+      if (data == null) return;
+      DateTime? parse(dynamic v) {
+        if (v is Timestamp) return v.toDate();
+        if (v is String) return DateTime.tryParse(v);
+        return null;
+      }
+      _dailySeed = (data['seed'] is int) ? data['seed'] as int : null;
+      _dailyStartedAt = parse(data['startedAt']);
+      _dailyCompletedAt = parse(data['completedAt']);
+      _dailyMoveCount = (data['moveCount'] is int) ? data['moveCount'] as int : 0;
+      final upcoming = data['upcomingTiers'];
+      if (upcoming is List) {
+        _dailyUpcomingTiers = upcoming.map((e) => e is int ? e : int.tryParse(e.toString()) ?? 1).toList();
+      } else {
+        _dailyUpcomingTiers = [];
+      }
+    } catch (e) {
+      debugPrint('Failed to refresh daily challenge status: $e');
+    }
+  }
+
+  Future<void> startDailyChallenge() async {
+    if (_firebaseService == null || !_firebaseService!.isAuthenticated) return;
+    if (isInDailyChallenge) return;
+    final userId = _userId;
+    if (userId == null || userId.isEmpty) return;
+
+    final key = _dateKey(DateTime.now());
+    _dailyKey = key;
+    _dailyPromptedThisSession = true;
+
+    final docRef = _firebaseService!.firestore
+        .collection('player_stats')
+        .doc(userId)
+        .collection('daily_challenges')
+        .doc(key);
+
+    // Snapshot normal mode state.
+    _normalSnapshotStats = _playerStats;
+    _normalSnapshotGrid = List<GameItem>.from(_gridItems);
+
+    try {
+      final existing = await docRef.get().timeout(const Duration(seconds: 6));
+      if (existing.exists && existing.data() != null) {
+        final data = existing.data()!;
+        final items = data['gridItems'];
+        final upcoming = data['upcomingTiers'];
+        final seed = (data['seed'] is int) ? data['seed'] as int : null;
+        _dailySeed = seed;
+        _dailyRand = Random((_dailySeed ?? 1) & 0x7FFFFFFF);
+        _dailyMoveCount = (data['moveCount'] is int) ? data['moveCount'] as int : 0;
+        DateTime? parse(dynamic v) {
+          if (v is Timestamp) return v.toDate();
+          if (v is String) return DateTime.tryParse(v);
+          return null;
+        }
+        _dailyStartedAt = parse(data['startedAt']) ?? DateTime.now();
+        _dailyCompletedAt = parse(data['completedAt']);
+        if (upcoming is List) {
+          _dailyUpcomingTiers = upcoming.map((e) => e is int ? e : int.tryParse(e.toString()) ?? 1).toList();
+        } else {
+          _dailyUpcomingTiers = [];
+        }
+        if (items is List) {
+          _gridItems = items
+              .whereType<Map>()
+              .map((m) => GameItem.fromJson(Map<String, dynamic>.from(m)))
+              .toList();
+        } else {
+          _gridItems = [];
+        }
+        // Resume daily mode even if already completed (lets player view board); but we won't re-reward.
+        _gameMode = GameMode.dailyChallenge;
+        // Challenge stats start from a clean slate (no impact on normal mode)
+        _playerStats = _playerStats.copyWith(energy: 9999, maxEnergy: 9999, updatedAt: DateTime.now());
+        notifyListeners();
+        return;
+      }
+    } catch (e) {
+      debugPrint('Daily challenge resume failed; will start new: $e');
+    }
+
+    // Create new daily challenge.
+    _dailySeed = _fnv1a32('$userId|$key');
+    _dailyRand = Random((_dailySeed ?? 1) & 0x7FFFFFFF);
+    _dailyStartedAt = DateTime.now();
+    _dailyCompletedAt = null;
+    _dailyMoveCount = 0;
+    _dailyPendingRewardGems = 0;
+
+    _dailyUpcomingTiers = List<int>.generate(80, (_) {
+      // Keep early tiers biased low but not trivial.
+      final roll = _dailyRand.nextDouble();
+      if (roll < 0.62) return 1 + _dailyRand.nextInt(2); // 1-2
+      if (roll < 0.90) return 2 + _dailyRand.nextInt(2); // 2-3
+      return 4; // occasional 4
+    });
+
+    _gridItems = _generateDailyChallengeBoard();
+    _gameMode = GameMode.dailyChallenge;
+    _playerStats = _playerStats.copyWith(energy: 9999, maxEnergy: 9999, updatedAt: DateTime.now());
+
+    await _saveDailyChallengeState();
+    notifyListeners();
+  }
+
+  Future<void> exitDailyChallenge({bool abandon = false}) async {
+    if (!isInDailyChallenge) return;
+    // Restore normal mode state.
+    final restoreStats = _normalSnapshotStats;
+    final restoreGrid = _normalSnapshotGrid;
+    if (restoreStats != null) {
+      // Apply any pending rewards to the restored stats.
+      if (!abandon && _dailyPendingRewardGems > 0) {
+        _playerStats = restoreStats.copyWith(
+          gems: restoreStats.gems + _dailyPendingRewardGems,
+          updatedAt: DateTime.now(),
+        );
+        _dailyPendingRewardGems = 0;
+        try {
+          await _savePlayerStats();
+        } catch (e) {
+          debugPrint('Failed to grant daily challenge reward: $e');
+        }
+      } else {
+        _playerStats = restoreStats;
+      }
+    }
+    if (restoreGrid != null) _gridItems = restoreGrid;
+    _normalSnapshotStats = null;
+    _normalSnapshotGrid = null;
+    _gameMode = GameMode.normal;
+    notifyListeners();
+  }
+
+  void markDailyChallengePromptedThisSession() {
+    _dailyPromptedThisSession = true;
+  }
+
+  List<GameItem> _generateDailyChallengeBoard() {
+    // Aim: a compact, solvable puzzle-like start that still feels “MergeWorks”.
+    // We place ~18 items with a few guaranteed triples.
+    final items = <GameItem>[];
+    final occupied = <String>{};
+    Map<String, int> randomEmpty() {
+      for (int i = 0; i < 250; i++) {
+        final x = _dailyRand.nextInt(gridSize);
+        final y = _dailyRand.nextInt(gridSize);
+        final key = '${x}_$y';
+        if (!occupied.contains(key)) {
+          occupied.add(key);
+          return {'x': x, 'y': y};
+        }
+      }
+      // fallback deterministic scan
+      for (int y = 0; y < gridSize; y++) {
+        for (int x = 0; x < gridSize; x++) {
+          final key = '${x}_$y';
+          if (!occupied.contains(key)) {
+            occupied.add(key);
+            return {'x': x, 'y': y};
+          }
+        }
+      }
+      return {'x': 0, 'y': 0};
+    }
+
+    // Two guaranteed triples of tier 1 and tier 2.
+    for (final tier in [1, 2]) {
+      for (int i = 0; i < 3; i++) {
+        final pos = randomEmpty();
+        items.add(_createItem(tier, pos['x']!, pos['y']!));
+      }
+    }
+
+    // Fill additional items with a gentle tier mix.
+    final extraCount = 12;
+    for (int i = 0; i < extraCount; i++) {
+      final pos = randomEmpty();
+      final r = _dailyRand.nextDouble();
+      int tier;
+      if (r < 0.55) tier = 1;
+      else if (r < 0.85) tier = 2;
+      else tier = 3;
+      items.add(_createItem(tier, pos['x']!, pos['y']!));
+    }
+
+    return items;
   }
 
   // Target population scales by current level to keep screens feeling rich
@@ -570,12 +853,12 @@ class GameService extends ChangeNotifier {
     // Levels 1–3: spawn a random tier 1–4 (auto-discover for onboarding variety)
     if (currentLevel <= 3) {
       final maxTier = min(4, _itemTemplates.length).toInt();
-      return 1 + _rand.nextInt(maxTier);
+      return 1 + _rng.nextInt(maxTier);
     }
 
     // Later: spawn between 1–4 tiers below the current highest tier on the board
     final highest = _highestNonWildcardTierOnBoard();
-    final delta = 1 + _rand.nextInt(4); // 1..4
+    final delta = 1 + _rng.nextInt(4); // 1..4
     // Keep this pure-int math (avoid `clamp()` returning `num`).
     final int upper = highest <= 1 ? 1 : (highest - 1);
     final int raw = highest - delta;
@@ -646,11 +929,11 @@ class GameService extends ChangeNotifier {
   void _maybeSpawnLowerTiersAround(int centerX, int centerY) {
     final lvl = currentLevel;
     final chance = (0.6 + 0.05 * (lvl - 1)).clamp(0.6, 0.9);
-    if (_rand.nextDouble() < chance) {
+    if (_rng.nextDouble() < chance) {
       // Add 2-4 items on higher levels, 1-3 on level 1
       final base = (lvl > 1) ? 2 : 1;
       final span = (lvl > 2) ? 3 : 2; // widen range slightly on later levels
-      final toAdd = base + _rand.nextInt(span);
+      final toAdd = base + _rng.nextInt(span);
       final occupied = _gridItems.map((i) => '${i.gridX}_${i.gridY}').toSet();
 
       List<Map<String, int>> nearbyEmpties(int x, int y) {
@@ -1002,7 +1285,9 @@ class GameService extends ChangeNotifier {
     final newItem = _createItem(newTier, targetX, targetY);
     _gridItems.add(newItem);
 
-    // Permanently record discovery of this tier in the collection
+    // Permanently record discovery of this tier in the collection.
+    // In Daily Challenge mode, discoveries apply only to the temporary stats and
+    // are discarded when exiting.
     final discovered = List<String>.from(_playerStats.discoveredItems);
     final discoveredKey = 'tier_$newTier';
     if (!discovered.contains(discoveredKey)) discovered.add(discoveredKey);
@@ -1034,41 +1319,48 @@ class GameService extends ChangeNotifier {
     // Chance-based burst of fresh low-tiers to keep momentum
     _maybeSpawnLowerTiersAround(centerX, centerY);
 
+    if (isInDailyChallenge) {
+      _dailyMoveCount += 1;
+      await _checkDailyChallengeCompletion();
+    }
+
     await _saveState();
     notifyListeners();
 
     // === Platform leaderboards & achievements ===
-    try {
-      // Submit scores
-      await _platformService?.submitAllScores(
-        totalMerges: _playerStats.totalMerges,
-        highestTier: _playerStats.highestTier,
-        level: currentLevel,
-      );
-      // First merge achievement
-      if (_playerStats.totalMerges == 1) {
-        await _platformService?.unlock(GamePlatformIds.achieveFirstMerge);
+    if (!isInDailyChallenge) {
+      try {
+        // Submit scores
+        await _platformService?.submitAllScores(
+          totalMerges: _playerStats.totalMerges,
+          highestTier: _playerStats.highestTier,
+          level: currentLevel,
+        );
+        // First merge achievement
+        if (_playerStats.totalMerges == 1) {
+          await _platformService?.unlock(GamePlatformIds.achieveFirstMerge);
+        }
+        // Tier milestones
+        if (newTier >= 5) {
+          await _platformService?.unlock(GamePlatformIds.achieveTier5);
+        }
+        if (newTier >= 10) {
+          await _platformService?.unlock(GamePlatformIds.achieveTier10);
+        }
+        if (newTier >= 15) {
+          await _platformService?.unlock(GamePlatformIds.achieveTier15);
+        }
+        // Level milestones
+        final lvl = currentLevel;
+        if (lvl >= 5) {
+          await _platformService?.unlock(GamePlatformIds.achieveLevel5);
+        }
+        if (lvl >= 10) {
+          await _platformService?.unlock(GamePlatformIds.achieveLevel10);
+        }
+      } catch (e) {
+        debugPrint('Platform updates after merge failed: $e');
       }
-      // Tier milestones
-      if (newTier >= 5) {
-        await _platformService?.unlock(GamePlatformIds.achieveTier5);
-      }
-      if (newTier >= 10) {
-        await _platformService?.unlock(GamePlatformIds.achieveTier10);
-      }
-      if (newTier >= 15) {
-        await _platformService?.unlock(GamePlatformIds.achieveTier15);
-      }
-      // Level milestones
-      final lvl = currentLevel;
-      if (lvl >= 5) {
-        await _platformService?.unlock(GamePlatformIds.achieveLevel5);
-      }
-      if (lvl >= 10) {
-        await _platformService?.unlock(GamePlatformIds.achieveLevel10);
-      }
-    } catch (e) {
-      debugPrint('Platform updates after merge failed: $e');
     }
     return newItem;
   }
@@ -1655,6 +1947,11 @@ class GameService extends ChangeNotifier {
   }
 
   Future<void> _saveState() async {
+    if (isInDailyChallenge) {
+      await _saveDailyChallengeState();
+      return;
+    }
+
     try {
       await _savePlayerStats().timeout(const Duration(seconds: 6));
     } on TimeoutException {
@@ -1669,6 +1966,49 @@ class GameService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Save grid items failed (saveState): $e');
     }
+  }
+
+  Future<void> _saveDailyChallengeState() async {
+    if (_firebaseService == null || !_firebaseService!.isAuthenticated) return;
+    final userId = _userId;
+    if (userId == null || userId.isEmpty) return;
+    final key = _dailyKey ?? _dateKey(DateTime.now());
+    _dailyKey = key;
+    try {
+      final docRef = _firebaseService!.firestore
+          .collection('player_stats')
+          .doc(userId)
+          .collection('daily_challenges')
+          .doc(key);
+
+      final payload = <String, dynamic>{
+        'key': key,
+        'seed': _dailySeed,
+        'startedAt': _dailyStartedAt != null ? Timestamp.fromDate(_dailyStartedAt!) : Timestamp.fromDate(DateTime.now()),
+        'completedAt': _dailyCompletedAt != null ? Timestamp.fromDate(_dailyCompletedAt!) : null,
+        'moveCount': _dailyMoveCount,
+        'upcomingTiers': _dailyUpcomingTiers,
+        'gridItems': _gridItems.map((e) => e.toJson()).toList(growable: false),
+        'updatedAt': Timestamp.fromDate(DateTime.now()),
+      };
+
+      await docRef.set(payload, SetOptions(merge: true));
+    } catch (e) {
+      debugPrint('Failed to save daily challenge state: $e');
+    }
+  }
+
+  Future<void> _checkDailyChallengeCompletion() async {
+    if (!isInDailyChallenge) return;
+    if (_dailyCompletedAt != null) return;
+    if (_gridItems.any((gi) => gi.gridX != null && gi.gridY != null)) return;
+
+    _dailyCompletedAt = DateTime.now();
+    // Simple, consistent reward. This is granted when the player exits the mode.
+    _dailyPendingRewardGems = 25;
+
+    await _saveDailyChallengeState();
+    notifyListeners();
   }
   
   Future<void> _savePlayerStats() async {

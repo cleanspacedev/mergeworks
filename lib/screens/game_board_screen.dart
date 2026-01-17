@@ -18,6 +18,7 @@ import 'package:mergeworks/widgets/hint_offer_sheet.dart';
 import 'package:mergeworks/widgets/no_moves_offer_sheet.dart';
 import 'package:mergeworks/widgets/no_energy_offer_sheet.dart';
 import 'package:mergeworks/widgets/no_summons_offer_sheet.dart';
+import 'package:mergeworks/widgets/daily_challenge_offer_sheet.dart';
 import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/services/accessibility_service.dart';
 import 'package:mergeworks/services/haptics_service.dart';
@@ -27,7 +28,9 @@ import 'package:mergeworks/services/popup_manager.dart';
 import 'package:mergeworks/nav.dart';
 
 class GameBoardScreen extends StatefulWidget {
-  const GameBoardScreen({super.key});
+  const GameBoardScreen({super.key, this.isDailyChallenge = false});
+
+  final bool isDailyChallenge;
 
   @override
   State<GameBoardScreen> createState() => _GameBoardScreenState();
@@ -112,6 +115,30 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     _confettiController = ConfettiController(duration: const Duration(seconds: 2));
     _shakeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 420));
     _resetIdleTimer();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final gs = context.read<GameService>();
+      final popup = context.read<PopupManager>();
+
+      if (widget.isDailyChallenge) {
+        try {
+          await gs.startDailyChallenge();
+        } catch (e) {
+          debugPrint('Failed to start daily challenge: $e');
+        }
+        return;
+      }
+
+      if (gs.shouldPromptDailyChallenge) {
+        gs.markDailyChallengePromptedThisSession();
+        await popup.showBottomSheet<void>(
+          context: context,
+          backgroundColor: Theme.of(context).colorScheme.surface,
+          builder: (_) => DailyChallengeOfferSheet(isCompleted: gs.dailyChallengeCompletedAt != null),
+        );
+      }
+    });
   }
 
   Future<void> _runInitialMoveCheckIfNeeded(GameService gs) async {
@@ -175,6 +202,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
   @override
   void dispose() {
+    if (widget.isDailyChallenge) {
+      unawaited(context.read<GameService>().exitDailyChallenge());
+    }
     _idleTimer?.cancel();
     _hintClearTimer?.cancel();
     _noMovesOfferTimer?.cancel();
@@ -1508,10 +1538,67 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   }
 
   Widget _buildTopBar(BuildContext context, GameService gameService) {
+    final isDaily = widget.isDailyChallenge || gameService.isInDailyChallenge;
+    final cs = Theme.of(context).colorScheme;
+
     return Padding(
       padding: AppSpacing.paddingMd,
       child: Column(
         children: [
+          if (isDaily) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: cs.surfaceContainerHighest.withValues(alpha: 0.65),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: cs.outline.withValues(alpha: 0.18)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.auto_awesome, color: cs.onSurface, size: 18),
+                  const SizedBox(width: 8),
+                  Text('Daily Challenge', style: context.textStyles.titleSmall?.semiBold),
+                  const Spacer(),
+                  Text('Next', style: context.textStyles.labelMedium?.withColor(cs.onSurfaceVariant)),
+                  const SizedBox(width: 8),
+                  for (final tier in gameService.dailyUpcomingPreview) ...[
+                    Container(
+                      width: 30,
+                      height: 30,
+                      margin: const EdgeInsets.only(left: 6),
+                      decoration: BoxDecoration(
+                        color: cs.surface.withValues(alpha: 0.85),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: cs.outline.withValues(alpha: 0.18)),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(gameService.emojiForTier(tier), style: const TextStyle(fontSize: 16)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (gameService.dailyChallengeCompletedAt != null) ...[
+              FilledButton.icon(
+                onPressed: () async {
+                  final popup = context.read<PopupManager>();
+                  await gameService.exitDailyChallenge();
+                  if (!context.mounted) return;
+                  context.go(AppRoutes.home);
+                  await popup.showCenterToast(context, message: 'Daily cleared! +25 gems', icon: Icons.celebration);
+                },
+                icon: Icon(Icons.celebration, color: cs.onPrimary),
+                label: Text('Claim 25 gems & return', style: context.textStyles.titleSmall?.semiBold?.withColor(cs.onPrimary)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: cs.primary,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+            ],
+          ],
           Row(
             children: [
               Expanded(
