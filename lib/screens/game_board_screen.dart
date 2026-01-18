@@ -100,6 +100,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   List<_Ghost> _ghosts = [];
   Offset? _targetCenter;
 
+  /// Defensive flag to prevent re-entrant merge calls while an animation is
+  /// in-flight.
+  bool _mergeInProgress = false;
+
   // Spawn animation state (reverse of merge)
   AnimationController? _spawnController;
   List<_SpawnGhost> _spawnGhosts = [];
@@ -900,6 +904,8 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     // Ensure BG music can start on platforms that require a user gesture (e.g., Web)
     context.read<AudioService>().maybeStartMusicFromUserGesture();
     setState(() {
+      _sanitizeSelection(gameService);
+
       // Toggle off if already selected
       if (_highlightedItems.contains(item.id)) {
         _highlightedItems.remove(item.id);
@@ -973,6 +979,23 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       context.read<AudioService>().playClickSound();
       _updateAlmostTherePulse(gameService);
     });
+  }
+
+  void _sanitizeSelection(GameService gs) {
+    try {
+      final validIds = gs.gridItems.map((e) => e.id).toSet();
+      _highlightedItems.removeWhere((id) => !validIds.contains(id));
+      if (_selectedItem != null && !validIds.contains(_selectedItem!.id)) {
+        _selectedItem = null;
+      }
+      if (_highlightedItems.isEmpty) {
+        _selectedItem = null;
+      }
+    } catch (e) {
+      debugPrint('Selection sanitize failed: $e');
+      _highlightedItems.clear();
+      _selectedItem = null;
+    }
   }
 
   void _onItemLongPress(GameItem item, GameService gameService) {
@@ -1202,7 +1225,13 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   }
 
   Future<void> _performMerge(GameService gameService, AudioService audioService, AchievementService achievementService, QuestService questService, HapticsService haptics) async {
+    if (_mergeInProgress) return;
     if (_selectedItem == null) return;
+
+    // Defensive: if highlighted IDs got stale due to any background state sync,
+    // clear them now so the player never gets stuck with an “active” selection
+    // that can't be extended.
+    _sanitizeSelection(gameService);
 
     final itemsToMerge = gameService.gridItems.where((item) => _highlightedItems.contains(item.id)).toList();
     final selectionCount = itemsToMerge.length;
@@ -1218,22 +1247,36 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       return;
     }
 
-    // Play advanced merge animation before mutating state
-    await _playMergeAnimation(itemsToMerge);
+    _mergeInProgress = true;
+    GameItem? newItem;
     final prevLevel = gameService.currentLevel;
-    final newItem = await gameService.mergeItems(
-      itemsToMerge,
-      preferredTargetItemId: _selectedItem?.id,
-    );
+    try {
+      // Play advanced merge animation before mutating state
+      await _playMergeAnimation(itemsToMerge);
+
+      newItem = await gameService.mergeItems(
+        itemsToMerge,
+        preferredTargetItemId: _selectedItem?.id,
+      );
+    } catch (e) {
+      debugPrint('Merge attempt failed: $e');
+    } finally {
+      // Critical: regardless of outcome, reset selection so the user never gets
+      // stuck with stale IDs that block future selections.
+      if (mounted) {
+        setState(() {
+          _selectedItem = null;
+          _highlightedItems.clear();
+          _almostThereItems.clear();
+          _invalidMergeAttempts = 0;
+        });
+      }
+      _mergeInProgress = false;
+    }
+
     if (newItem != null) {
       // Haptics first so it lands with the visual
       unawaited(haptics.onMerge(selectionCount: itemsToMerge.length, resultingTier: newItem.tier));
-      setState(() {
-        _selectedItem = null;
-        _highlightedItems.clear();
-        _almostThereItems.clear();
-        _invalidMergeAttempts = 0; // reset on successful merge
-      });
 
       // Tuned SFX and celebrations
       final reducedMotion = context.read<AccessibilityService>().reducedMotion;
@@ -1285,6 +1328,11 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
       // Post-merge board evaluation: decide which (if any) offer/nudge to show.
       await _runPostMergeBoardCheck(gameService);
+    } else {
+      // If we reached here, we *expected* a merge to happen (canMerge == true)
+      // but the service returned null. This can happen if state changed between
+      // selection and execution; inform the player and keep the board usable.
+      _showCenterPopup('Merge cancelled — try again', icon: Icons.refresh);
     }
   }
 
@@ -1375,6 +1423,15 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
 
         // After the frame, check for newly spawned items to animate
         WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          // If state changed (spawns, remote sync, abilities), ensure we never
+          // keep a selection referencing non-existent items.
+          final before = _highlightedItems.length;
+          _sanitizeSelection(gameService);
+          if (before != _highlightedItems.length) {
+            _refresh();
+          }
+
           final ev = gameService.takeLastSpawnEvent();
           if (ev != null) {
             _playSpawnAnimation(ev.items, originX: ev.originX, originY: ev.originY);
