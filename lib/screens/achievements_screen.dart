@@ -7,6 +7,7 @@ import 'package:mergeworks/services/game_service.dart';
 import 'package:mergeworks/models/achievement.dart';
 import 'package:mergeworks/models/daily_quest.dart';
 import 'package:mergeworks/theme.dart';
+import 'package:mergeworks/widgets/responsive_center.dart';
 
 class AchievementsScreen extends StatelessWidget {
   const AchievementsScreen({super.key});
@@ -56,11 +57,12 @@ class _AchievementsTab extends StatelessWidget {
         final achievements = service.achievements;
         final completed = achievements.where((a) => a.isCompleted).length;
 
-        return Column(
-          children: [
-            Container(
-              margin: AppSpacing.paddingMd,
-              padding: AppSpacing.paddingMd,
+        return ResponsiveCenter(
+          child: Column(
+            children: [
+              Container(
+                margin: EdgeInsets.zero,
+                padding: AppSpacing.paddingMd,
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
@@ -100,14 +102,16 @@ class _AchievementsTab extends StatelessWidget {
                 ],
               ),
             ),
-            Expanded(
-              child: ListView.builder(
-                padding: AppSpacing.paddingMd,
-                itemCount: achievements.length,
-                itemBuilder: (context, index) => _AchievementCard(achievement: achievements[index]),
+              const SizedBox(height: AppSpacing.lg),
+              Expanded(
+                child: ListView.builder(
+                  padding: EdgeInsets.zero,
+                  itemCount: achievements.length,
+                  itemBuilder: (context, index) => _AchievementCard(achievement: achievements[index]),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         );
       },
     );
@@ -250,10 +254,12 @@ class _QuestsTab extends StatelessWidget {
           );
         }
 
-        return ListView.builder(
-          padding: AppSpacing.paddingMd,
-          itemCount: quests.length,
-          itemBuilder: (context, index) => _QuestCard(quest: quests[index]),
+        return ResponsiveCenter(
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            itemCount: quests.length,
+            itemBuilder: (context, index) => _QuestCard(quest: quests[index]),
+          ),
         );
       },
     );
@@ -283,10 +289,12 @@ class _EventQuestsTab extends StatelessWidget {
           );
         }
 
-        return ListView.builder(
-          padding: AppSpacing.paddingMd,
-          itemCount: quests.length,
-          itemBuilder: (context, index) => _QuestCard(quest: quests[index]),
+        return ResponsiveCenter(
+          child: ListView.builder(
+            padding: EdgeInsets.zero,
+            itemCount: quests.length,
+            itemBuilder: (context, index) => _QuestCard(quest: quests[index]),
+          ),
         );
       },
     );
@@ -312,11 +320,12 @@ class _SeasonTab extends StatelessWidget {
         final needed = xpNeededForNext(stats.seasonLevel);
         final progress = needed <= 0 ? 0.0 : (stats.seasonXp / needed).clamp(0.0, 1.0);
 
-        return ListView(
-          padding: AppSpacing.paddingMd,
-          children: [
-            Container(
-              padding: AppSpacing.paddingMd,
+        return ResponsiveCenter(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              Container(
+                padding: AppSpacing.paddingMd,
               decoration: BoxDecoration(
                 gradient: LinearGradient(colors: [cs.primaryContainer, cs.tertiaryContainer]),
                 borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -403,7 +412,8 @@ class _SeasonTab extends StatelessWidget {
                 ],
               ),
             ),
-          ],
+            ],
+          ),
         );
       },
     );

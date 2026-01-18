@@ -14,6 +14,7 @@ import 'package:mergeworks/services/game_platform_service.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:mergeworks/services/popup_manager.dart';
+import 'package:mergeworks/widgets/responsive_center.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -30,9 +31,10 @@ class SettingsScreen extends StatelessWidget {
         ),
       ),
       body: Consumer3<AudioService, GameService, AccessibilityService>(builder: (context, audioService, gameService, a11y, child) {
-        return ListView(
-          padding: AppSpacing.paddingMd,
-          children: [
+        return ResponsiveCenter(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
             // Move Game Stats to the top
             _buildSection(
               context,
@@ -280,7 +282,8 @@ class SettingsScreen extends StatelessWidget {
               icon: const Icon(Icons.refresh, color: Colors.red),
               label: const Text('Reset Game Progress', style: TextStyle(color: Colors.red)),
             ),
-          ],
+            ],
+          ),
         );
       }),
     );

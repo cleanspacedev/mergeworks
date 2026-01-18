@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'dart:math' as math;
 
 class AppSpacing {
   // Spacing values
@@ -41,6 +42,19 @@ class AppRadius {
   static const double xl = 24.0;
 }
 
+/// Responsive breakpoints used across the app.
+///
+/// These are intentionally simple and based on the shortest dimension so they
+/// behave well in portrait/landscape and on foldables.
+class AppBreakpoints {
+  static const double tablet = 600;
+  static const double desktop = 1024;
+
+  /// Constrain very wide layouts for readability.
+  static const double maxContentWidthTablet = 900;
+  static const double maxContentWidthDesktop = 1120;
+}
+
 // =============================================================================
 // TEXT STYLE EXTENSIONS
 // =============================================================================
@@ -49,6 +63,26 @@ class AppRadius {
 /// Access via context.textStyles
 extension TextStyleContext on BuildContext {
   TextTheme get textStyles => Theme.of(this).textTheme;
+}
+
+/// Responsive helpers.
+extension ResponsiveContext on BuildContext {
+  Size get screenSize => MediaQuery.sizeOf(this);
+
+  double get shortestSide => math.min(screenSize.width, screenSize.height);
+
+  bool get isTablet => shortestSide >= AppBreakpoints.tablet;
+
+  bool get isDesktop => shortestSide >= AppBreakpoints.desktop;
+
+  double get contentMaxWidth {
+    if (isDesktop) return AppBreakpoints.maxContentWidthDesktop;
+    if (isTablet) return AppBreakpoints.maxContentWidthTablet;
+    return double.infinity;
+  }
+
+  /// Default horizontal padding for pages.
+  EdgeInsets get pagePadding => EdgeInsets.symmetric(horizontal: isTablet ? AppSpacing.xl : AppSpacing.md, vertical: AppSpacing.md);
 }
 
 /// Helper methods for common text style modifications

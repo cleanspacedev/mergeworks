@@ -7,6 +7,7 @@ import 'package:mergeworks/theme.dart';
 import 'package:mergeworks/models/game_item.dart';
 import 'package:mergeworks/widgets/unique_item_glyph.dart';
 import 'package:mergeworks/services/popup_manager.dart';
+import 'package:mergeworks/widgets/responsive_center.dart';
 
 class CollectionScreen extends StatelessWidget {
   const CollectionScreen({super.key});
@@ -27,11 +28,12 @@ class CollectionScreen extends StatelessWidget {
           final items = gameService.getAllDiscoveredItems();
           final discovered = items.where((item) => item.isDiscovered).length;
 
-          return Column(
-            children: [
-              Container(
-                margin: AppSpacing.paddingMd,
-                padding: AppSpacing.paddingMd,
+          return ResponsiveCenter(
+            child: Column(
+              children: [
+                Container(
+                  margin: EdgeInsets.zero,
+                  padding: AppSpacing.paddingMd,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: [
@@ -82,25 +84,28 @@ class CollectionScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              Expanded(
-                child: GridView.builder(
-                  padding: AppSpacing.paddingMd,
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: AppSpacing.md,
-                    mainAxisSpacing: AppSpacing.md,
-                    childAspectRatio: 0.8,
+                const SizedBox(height: AppSpacing.lg),
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final w = constraints.maxWidth;
+                      final crossAxisCount = w >= AppBreakpoints.desktop ? 6 : (context.isTablet ? 5 : 3);
+                      return GridView.builder(
+                        padding: EdgeInsets.zero,
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          crossAxisSpacing: AppSpacing.md,
+                          mainAxisSpacing: AppSpacing.md,
+                          childAspectRatio: 0.82,
+                        ),
+                        itemCount: items.length,
+                        itemBuilder: (context, index) => _CollectionCard(item: items[index]),
+                      );
+                    },
                   ),
-                  itemCount: items.length,
-                  itemBuilder: (context, index) {
-                    final item = items[index];
-                    return _CollectionCard(
-                      item: item,
-                    );
-                  },
                 ),
-              ),
-            ],
+              ],
+            ),
           );
         },
       ),

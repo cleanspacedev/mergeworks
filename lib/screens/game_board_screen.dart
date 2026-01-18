@@ -1338,6 +1338,9 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
   Widget build(BuildContext context) {
     return Consumer4<GameService, AudioService, AchievementService, QuestService>(
       builder: (context, gameService, audioService, achievementService, questService, child) {
+        final size = MediaQuery.sizeOf(context);
+        final isTwoPaneTablet = context.isTablet && size.width >= 900;
+
         // After a refresh, the service can briefly report “no moves” while
         // Firestore/local state finishes loading. Run a one-time check once
         // loading completes to sync our debounce state.
@@ -1440,8 +1443,43 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                     child: Column(
                       children: [
                         _buildTopBar(context, gameService),
-                        Expanded(child: _buildGameGrid(context, gameService, audioService, achievementService, questService)),
-                        _buildBottomBar(context, gameService),
+                        if (!isTwoPaneTablet) ...[
+                          Expanded(child: _buildGameGrid(context, gameService, audioService, achievementService, questService)),
+                          _buildBottomBar(context, gameService),
+                        ] else
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.md),
+                              child: Row(
+                                children: [
+                                  Expanded(child: _buildGameGrid(context, gameService, audioService, achievementService, questService)),
+                                  const SizedBox(width: AppSpacing.md),
+                                  SizedBox(width: 380, child: _TabletSidePanel(
+                                    gameService: gameService,
+                                    selectedItem: _selectedItem,
+                                    highlightedIds: _highlightedItems,
+                                    onMergePressed: () => _performMerge(
+                                      gameService,
+                                      context.read<AudioService>(),
+                                      context.read<AchievementService>(),
+                                      context.read<QuestService>(),
+                                      context.read<HapticsService>(),
+                                    ),
+                                    onSpinPressed: () => context.push(AppRoutes.dailySpin),
+                                    onAbilityUsed: (message) => _showMessage(message),
+                                    onCenterPopup: (message, icon) => _showCenterPopup(message, icon: icon),
+                                    setSelectedItem: (gi) => setState(() => _selectedItem = gi),
+                                    clearSelection: () => setState(() {
+                                      _selectedItem = null;
+                                      _highlightedItems.clear();
+                                    }),
+                                    togglePlacingWildcard: () => setState(() => _placingWildcard = !_placingWildcard),
+                                    placingWildcard: _placingWildcard,
+                                  )),
+                                ],
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1993,6 +2031,362 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
     if (_highlightedItems.length != 2) return false;
     final items = gs.gridItems.where((i) => _highlightedItems.contains(i.id)).toList();
     return items.length == 2 && items[0].tier == items[1].tier && items[0].tier < GameService.totalTiers;
+  }
+}
+
+class _TabletSidePanel extends StatelessWidget {
+  const _TabletSidePanel({
+    required this.gameService,
+    required this.selectedItem,
+    required this.highlightedIds,
+    required this.onMergePressed,
+    required this.onSpinPressed,
+    required this.onAbilityUsed,
+    required this.onCenterPopup,
+    required this.setSelectedItem,
+    required this.clearSelection,
+    required this.togglePlacingWildcard,
+    required this.placingWildcard,
+  });
+
+  final GameService gameService;
+  final GameItem? selectedItem;
+  final Set<String> highlightedIds;
+  final VoidCallback onMergePressed;
+  final VoidCallback onSpinPressed;
+  final void Function(String message) onAbilityUsed;
+  final void Function(String message, IconData? icon) onCenterPopup;
+  final void Function(GameItem? gi) setSelectedItem;
+  final VoidCallback clearSelection;
+  final VoidCallback togglePlacingWildcard;
+  final bool placingWildcard;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+
+    final canPowerMerge = highlightedIds.length == 2 && _areTwoSameTier(gameService, highlightedIds) && gameService.powerMergeCharges > 0;
+    final canMergeNow = highlightedIds.length >= 3 || canPowerMerge;
+    final onBoardCount = gameService.gridItems.where((i) => i.gridX != null && i.gridY != null).length;
+    final isBoardFull = onBoardCount >= GameService.gridSize * GameService.gridSize;
+    final coins = gameService.playerStats.coins;
+    final hasSelection = selectedItem != null;
+    final canAffordSummon = coins >= 80;
+    final canAffordDuplicate = coins >= 120;
+    final canAffordClear = coins >= 100;
+    final canAffordShuffle = coins >= 150;
+    final canAffordPowerMerge = coins >= 200;
+    final canBomb = gameService.playerStats.bombRunes > 0 && hasSelection;
+    final canWildcard = gameService.playerStats.wildcardOrbs > 0;
+    final canTierUp = gameService.playerStats.tierUpTokens > 0 && hasSelection && !selectedItem!.isWildcard && selectedItem!.tier < GameService.totalTiers;
+
+    final audio = context.read<AudioService>();
+    final haptics = context.read<HapticsService>();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(AppRadius.xl),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.18)),
+      ),
+      padding: EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.md + bottomInset),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('Actions', style: context.textStyles.titleMedium?.bold.withColor(cs.onSurface)),
+              ),
+              if (placingWildcard)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: cs.primaryContainer, borderRadius: BorderRadius.circular(999)),
+                  child: Text('Placing 🃏', style: context.textStyles.labelMedium?.bold.withColor(cs.onPrimaryContainer)),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SectionCard(
+                    title: 'Abilities',
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.auto_awesome_motion,
+                            label: 'Summon x4',
+                            cost: 80,
+                            color: cs.tertiary,
+                            onPressed: (isBoardFull || !canAffordSummon)
+                                ? null
+                                : () async {
+                                    audio.playAbilityUseSound();
+                                    final ok = await gameService.abilitySummonBurst(count: 4, cost: 80);
+                                    if (ok) {
+                                      haptics.onSummon();
+                                      onAbilityUsed('Summoned new items ✨');
+                                    } else {
+                                      onAbilityUsed(isBoardFull ? 'Board is full' : 'Not enough coins');
+                                    }
+                                  },
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.content_copy,
+                            label: 'Duplicate',
+                            cost: 120,
+                            color: cs.primary,
+                            onPressed: (hasSelection && canAffordDuplicate)
+                                ? () async {
+                                    audio.playAbilityUseSound();
+                                    final ok = await gameService.abilityDuplicateItem(selectedItem!.id, cost: 120);
+                                    if (ok) {
+                                      haptics.onAbilityDuplicate();
+                                      onAbilityUsed('Duplicated item ➕');
+                                    } else {
+                                      onAbilityUsed('Action failed or not enough coins');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.cleaning_services,
+                            label: 'Clear',
+                            cost: 100,
+                            color: cs.error,
+                            onPressed: (hasSelection && canAffordClear)
+                                ? () async {
+                                    audio.playAbilityUseSound();
+                                    final ok = await gameService.abilityClearItem(selectedItem!.id, cost: 100);
+                                    if (ok) {
+                                      clearSelection();
+                                      haptics.onAbilityClear();
+                                      onAbilityUsed('Cleared item 🧹');
+                                    } else {
+                                      onAbilityUsed('Action failed or not enough coins');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.shuffle,
+                            label: 'Shuffle',
+                            cost: 150,
+                            color: cs.secondary,
+                            onPressed: canAffordShuffle
+                                ? () async {
+                                    audio.playAbilityUseSound();
+                                    final ok = await gameService.abilityShuffleBoard(cost: 150);
+                                    if (ok) {
+                                      haptics.onAbilityShuffle();
+                                      onAbilityUsed('Shuffled the board 🔀');
+                                    } else {
+                                      onAbilityUsed('Not enough coins');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.flash_on,
+                            label: '2-Merge',
+                            cost: 200,
+                            trailing: gameService.powerMergeCharges > 0 ? 'x${gameService.powerMergeCharges}' : null,
+                            color: cs.primaryContainer,
+                            onPressed: canAffordPowerMerge
+                                ? () async {
+                                    audio.playAbilityUseSound();
+                                    final ok = await gameService.abilityBuyPowerMerge(charges: 1, cost: 200);
+                                    if (ok) {
+                                      haptics.onPowerMergePurchased();
+                                      onAbilityUsed('Power Merge ready ⚡');
+                                    } else {
+                                      onAbilityUsed('Not enough coins');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.auto_awesome,
+                            label: 'Wildcard',
+                            cost: 0,
+                            trailing: gameService.playerStats.wildcardOrbs > 0 ? 'x${gameService.playerStats.wildcardOrbs}' : null,
+                            color: cs.primary,
+                            onPressed: canWildcard
+                                ? () {
+                                    togglePlacingWildcard();
+                                    if (!placingWildcard) {
+                                      onCenterPopup('Tap an empty slot to place 🃏', Icons.touch_app);
+                                    } else {
+                                      onAbilityUsed('Wildcard placement cancelled');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.local_fire_department,
+                            label: 'Bomb',
+                            cost: 0,
+                            trailing: gameService.playerStats.bombRunes > 0 ? 'x${gameService.playerStats.bombRunes}' : null,
+                            color: cs.error,
+                            onPressed: canBomb
+                                ? () async {
+                                    final ok = await gameService.abilityBombArea(selectedItem!.id);
+                                    if (ok) {
+                                      clearSelection();
+                                      haptics.onAbilityClear();
+                                      audio.playBombSound();
+                                      onAbilityUsed('Boom! Cleared area 💥');
+                                    } else {
+                                      onAbilityUsed('No Bomb Rune or no target');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 170,
+                          child: _AbilityButton(
+                            icon: Icons.upgrade,
+                            label: 'Tier+',
+                            cost: 0,
+                            trailing: gameService.playerStats.tierUpTokens > 0 ? 'x${gameService.playerStats.tierUpTokens}' : null,
+                            color: cs.tertiary,
+                            onPressed: canTierUp
+                                ? () async {
+                                    final ok = await gameService.abilityTierUp(selectedItem!.id);
+                                    if (ok) {
+                                      haptics.successSoft();
+                                      audio.playAbilityUseSound();
+                                      onAbilityUsed('Tier increased ⤴️');
+                                    } else {
+                                      onAbilityUsed('Upgrade failed');
+                                    }
+                                  }
+                                : null,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _SectionCard(
+                    title: 'Selection',
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            hasSelection ? '${selectedItem!.emoji}  Tier ${selectedItem!.tier}' : 'None',
+                            style: context.textStyles.titleSmall?.semiBold.withColor(cs.onSurface),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: hasSelection ? clearSelection : null,
+                          icon: Icon(Icons.close, color: hasSelection ? cs.primary : cs.onSurfaceVariant, size: 18),
+                          label: Text('Clear', style: context.textStyles.labelLarge?.bold.withColor(hasSelection ? cs.primary : cs.onSurfaceVariant)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: canMergeNow ? onMergePressed : null,
+                  icon: Icon(Icons.auto_awesome, color: cs.onPrimary, size: 24),
+                  label: Text(
+                    'Merge (${highlightedIds.length})${canPowerMerge ? ' • Power' : ''}',
+                    style: context.textStyles.titleMedium?.bold.withColor(cs.onPrimary),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: cs.primary,
+                    foregroundColor: cs.onPrimary,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: const StadiumBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              FilledButton.tonalIcon(
+                onPressed: onSpinPressed,
+                icon: Icon(Icons.casino, color: cs.onSecondaryContainer, size: 24),
+                label: Text('Spin', style: context.textStyles.titleMedium?.bold.withColor(cs.onSecondaryContainer)),
+                style: FilledButton.styleFrom(
+                  backgroundColor: cs.secondaryContainer,
+                  foregroundColor: cs.onSecondaryContainer,
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg, vertical: 16),
+                  shape: const StadiumBorder(),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static bool _areTwoSameTier(GameService gs, Set<String> highlightedIds) {
+    if (highlightedIds.length != 2) return false;
+    final items = gs.gridItems.where((i) => highlightedIds.contains(i.id)).toList();
+    return items.length == 2 && items[0].tier == items[1].tier && items[0].tier < GameService.totalTiers;
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.14)),
+      ),
+      padding: AppSpacing.paddingMd,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: context.textStyles.labelLarge?.bold.withColor(cs.onSurfaceVariant)),
+          const SizedBox(height: AppSpacing.sm),
+          child,
+        ],
+      ),
+    );
   }
 }
 

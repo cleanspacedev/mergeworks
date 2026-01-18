@@ -11,6 +11,7 @@ import 'package:mergeworks/services/audio_service.dart';
 import 'package:mergeworks/widgets/particle_field.dart';
 import 'package:mergeworks/widgets/ads_banner.dart';
 import 'package:mergeworks/services/popup_manager.dart';
+import 'package:mergeworks/widgets/responsive_center.dart';
 
 class ShopScreen extends StatelessWidget {
   const ShopScreen({super.key});
@@ -33,9 +34,10 @@ class ShopScreen extends StatelessWidget {
           final gemItems = shopService.items.where((item) => item.type == ShopItemType.gems).toList();
           final specials = shopService.items.where((item) => item.type == ShopItemType.special || item.type == ShopItemType.adRemoval).toList();
 
-          return ListView(
-            padding: AppSpacing.paddingMd,
-            children: [
+          return ResponsiveCenter(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
               if (!shopService.iapAvailable)
                 Card(
                   margin: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -82,7 +84,8 @@ class ShopScreen extends StatelessWidget {
                 shopService,
                 gameService,
               ),
-            ],
+              ],
+            ),
           );
         },
       ),
@@ -97,6 +100,8 @@ class ShopScreen extends StatelessWidget {
     ShopService shopService,
     GameService gameService,
   ) {
+    final w = MediaQuery.sizeOf(context).width;
+    final crossAxisCount = w >= AppBreakpoints.desktop ? 3 : (context.isTablet ? 2 : 1);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -114,34 +119,44 @@ class ShopScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.md),
-        ...items.map((item) {
-          final isSpecial = item.type == ShopItemType.special;
-          final isLocked = isSpecial && item.requiredLevel > gameService.currentLevel;
-          final isAdRemoval = item.type == ShopItemType.adRemoval;
-          final alreadyOwned = isAdRemoval && gameService.playerStats.adRemovalPurchased;
-          final canAffordGems = isSpecial ? ((item.gemCost ?? 0) <= gameService.playerStats.gems) : true;
-          final purchasable = isSpecial || shopService.hasProductDetails(item.id);
-          final bool isAuto = item.id == 'special_auto_select_upgrade';
-          final int autoCount = gameService.playerStats.autoSelectCount;
-          final bool atCap = isAuto && autoCount >= 10;
-          final disabled = isLocked || alreadyOwned || !canAffordGems || !purchasable || atCap;
-          final priceLabel = isSpecial
-              ? null
-              : (purchasable
-                  ? (shopService.priceLabelFor(item.id) ?? '\$${item.price.toStringAsFixed(2)}')
-                  : 'Unavailable');
-          final displayItem = isAuto
-              ? item.copyWith(name: '${item.name} (Lv ${autoCount == 0 ? 0 : autoCount}/10)')
-              : item;
-          return _ShopItemCard(
-            item: displayItem,
-            isLocked: isLocked || atCap,
-            lockLabel: atCap ? 'Maxed' : (isLocked ? 'Reach Level ${item.requiredLevel}' : null),
-            disabled: disabled,
-            priceLabel: priceLabel,
-            onPurchase: disabled ? null : () => _handlePurchase(context, item, shopService, gameService),
-          );
-        }),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: AppSpacing.md,
+            mainAxisSpacing: AppSpacing.md,
+            childAspectRatio: crossAxisCount == 1 ? 3.1 : 2.6,
+          ),
+          itemCount: items.length,
+          itemBuilder: (context, index) {
+            final item = items[index];
+            final isSpecial = item.type == ShopItemType.special;
+            final isLocked = isSpecial && item.requiredLevel > gameService.currentLevel;
+            final isAdRemoval = item.type == ShopItemType.adRemoval;
+            final alreadyOwned = isAdRemoval && gameService.playerStats.adRemovalPurchased;
+            final canAffordGems = isSpecial ? ((item.gemCost ?? 0) <= gameService.playerStats.gems) : true;
+            final purchasable = isSpecial || shopService.hasProductDetails(item.id);
+            final bool isAuto = item.id == 'special_auto_select_upgrade';
+            final int autoCount = gameService.playerStats.autoSelectCount;
+            final bool atCap = isAuto && autoCount >= 10;
+            final disabled = isLocked || alreadyOwned || !canAffordGems || !purchasable || atCap;
+            final priceLabel = isSpecial
+                ? null
+                : (purchasable
+                    ? (shopService.priceLabelFor(item.id) ?? '\$${item.price.toStringAsFixed(2)}')
+                    : 'Unavailable');
+            final displayItem = isAuto ? item.copyWith(name: '${item.name} (Lv ${autoCount == 0 ? 0 : autoCount}/10)') : item;
+            return _ShopItemCard(
+              item: displayItem,
+              isLocked: isLocked || atCap,
+              lockLabel: atCap ? 'Maxed' : (isLocked ? 'Reach Level ${item.requiredLevel}' : null),
+              disabled: disabled,
+              priceLabel: priceLabel,
+              onPurchase: disabled ? null : () => _handlePurchase(context, item, shopService, gameService),
+            );
+          },
+        ),
       ],
     );
   }
