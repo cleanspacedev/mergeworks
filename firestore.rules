@@ -1,71 +1,61 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function isSignedIn() { return request.auth != null && request.auth.uid != null; }
-    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
-    function isOwnerField(d) { return isSignedIn() && d.user_id == request.auth.uid; }
-
-    // Users collection (optional direct access to the user doc)
-    match /users/{userId} {
-      // Allow a user to access their own user document
-      allow read, create, update, delete: if isOwner(userId);
-
-      // Achievements stored under users/{uid}/achievements/{achievementId}
-      match /achievements/{achievementId} {
-        // Each user can read/write only their own achievements
-        allow read, create, update, delete: if isOwner(userId);
-      }
-
-      // Bug reports stored under users/{uid}/bug_reports/{reportId}
-      match /bug_reports/{reportId} {
-        // Allow a user to submit and view their own bug reports
-        allow create: if isOwner(userId);
-        allow read: if isOwner(userId);
-        // Disallow updates/deletes by default to preserve the report history
-        allow update, delete: if false;
-      }
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Player stats stored as player_stats/{uid}
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core player state (authoritative)
     match /player_stats/{userId} {
-      allow read, create, update, delete: if isOwner(userId);
+      allow get, create, update, delete: if isOwner(userId);
+      allow list: if false;
 
-      // Grid items subcollection under player_stats/{uid}/grid_items/{itemId}
+      // Board state
       match /grid_items/{itemId} {
-        // Each user can read/write only their own grid items
-        allow read, create, update, delete: if isOwner(userId);
+        allow read, write: if isOwner(userId);
+      }
+
+      // Daily quests (client-generated/progress)
+      match /daily_quests/{questId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Weekly event quests (client-generated/progress)
+      match /event_quests/{questId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Daily challenge snapshots and metadata
+      match /daily_challenges/{dayKey} {
+        allow read, write: if isOwner(userId);
       }
     }
 
-    // Grid items with an owner field: user_id
+    // Achievements are stored under users/{uid}/achievements
+    match /users/{userId} {
+      allow get, create, update, delete: if isOwner(userId);
+      allow list: if false;
+
+      match /achievements/{achievementId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    // Legacy fallback collection used during migration.
+    // Restrict to the authenticated user's rows.
     match /grid_items/{itemId} {
-      // Read allowed only if the document belongs to the requester
-      allow read: if isOwnerField(resource.data);
-
-      // Create/Update require user_id to match the requester
-      allow create: if isOwnerField(request.resource.data);
-      allow update: if isOwnerField(resource.data) && isOwnerField(request.resource.data);
-
-      // Delete allowed if the existing doc belongs to the requester
-      allow delete: if isOwnerField(resource.data);
-    }
-
-    // Daily quests with an owner field: user_id
-    match /daily_quests/{questId} {
-      allow read: if isOwnerField(resource.data);
-      allow create: if isOwnerField(request.resource.data);
-      allow update: if isOwnerField(resource.data) && isOwnerField(request.resource.data);
-      allow delete: if isOwnerField(resource.data);
-    }
-
-    // Centralized bug reports collection at top-level: bug_reports/{reportId}
-    match /bug_reports/{reportId} {
-      // Allow any authenticated user to submit bug reports
-      allow create: if isSignedIn();
-      // Only allow reading your own reports (reports have a user_id field)
       allow read: if isSignedIn() && resource.data.user_id == request.auth.uid;
-      // Disallow updates/deletes to preserve report history
-      allow update, delete: if false;
+      allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.user_id == request.auth.uid;
     }
   }
 }

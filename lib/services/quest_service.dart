@@ -9,6 +9,16 @@ class QuestService extends ChangeNotifier {
   List<DailyQuest> _quests = [];
   List<DailyQuest> _eventQuests = [];
 
+  CollectionReference<Map<String, dynamic>>? _dailyQuestsRef(String userId) => _firebaseService?.firestore
+      .collection('player_stats')
+      .doc(userId)
+      .collection('daily_quests');
+
+  CollectionReference<Map<String, dynamic>>? _eventQuestsRef(String userId) => _firebaseService?.firestore
+      .collection('player_stats')
+      .doc(userId)
+      .collection('event_quests');
+
   List<DailyQuest> get quests => _quests;
   List<DailyQuest> get activeQuests => _quests.where((q) => !q.isCompleted && q.expiresAt.isAfter(DateTime.now())).toList();
   List<DailyQuest> get completedQuests => _quests.where((q) => q.isCompleted).toList();
@@ -39,11 +49,7 @@ class QuestService extends ChangeNotifier {
     
     try {
       final userId = _firebaseService!.userId!;
-      final querySnapshot = await _firebaseService!.firestore
-          .collection('daily_quests')
-          .where('user_id', isEqualTo: userId)
-          .orderBy('expiresAt', descending: true)
-          .get();
+      final querySnapshot = await _dailyQuestsRef(userId)!.orderBy('expiresAt', descending: true).get();
       
       if (querySnapshot.docs.isNotEmpty) {
         _quests = querySnapshot.docs
@@ -57,11 +63,7 @@ class QuestService extends ChangeNotifier {
       }
 
       // Weekly event quests
-      final eventSnap = await _firebaseService!.firestore
-          .collection('event_quests')
-          .where('user_id', isEqualTo: userId)
-          .orderBy('expiresAt', descending: true)
-          .get();
+      final eventSnap = await _eventQuestsRef(userId)!.orderBy('expiresAt', descending: true).get();
       if (eventSnap.docs.isNotEmpty) {
         _eventQuests = eventSnap.docs.map((doc) => DailyQuest.fromJson({...doc.data(), 'id': doc.id})).toList();
         _cleanupExpiredEventQuests();
@@ -241,15 +243,13 @@ class QuestService extends ChangeNotifier {
 
   Future<void> _saveQuests() async {
     if (_firebaseService == null || !_firebaseService!.isAuthenticated) return;
-    
+
     try {
       final userId = _firebaseService!.userId!;
       final batch = _firebaseService!.firestore.batch();
       
       for (final quest in _quests) {
-        final docRef = _firebaseService!.firestore
-            .collection('daily_quests')
-            .doc(quest.id);
+        final docRef = _dailyQuestsRef(userId)!.doc(quest.id);
         batch.set(docRef, quest.copyWith(userId: userId).toJson(), SetOptions(merge: true));
       }
       
@@ -265,7 +265,7 @@ class QuestService extends ChangeNotifier {
       final userId = _firebaseService!.userId!;
       final batch = _firebaseService!.firestore.batch();
       for (final quest in _eventQuests) {
-        final docRef = _firebaseService!.firestore.collection('event_quests').doc(quest.id);
+        final docRef = _eventQuestsRef(userId)!.doc(quest.id);
         batch.set(docRef, quest.copyWith(userId: userId).toJson(), SetOptions(merge: true));
       }
       await batch.commit();

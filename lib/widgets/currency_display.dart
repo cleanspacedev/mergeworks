@@ -6,6 +6,7 @@ class CurrencyDisplay extends StatelessWidget {
   final int amount;
   final Color? backgroundColor;
   final VoidCallback? onTap;
+  final double? maxWidth;
 
   const CurrencyDisplay({
     super.key,
@@ -13,6 +14,7 @@ class CurrencyDisplay extends StatelessWidget {
     required this.amount,
     this.backgroundColor,
     this.onTap,
+    this.maxWidth,
   });
 
   @override
@@ -25,18 +27,29 @@ class CurrencyDisplay extends StatelessWidget {
           color: backgroundColor ?? Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(AppRadius.lg),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(icon, style: const TextStyle(fontSize: 18)),
-            const SizedBox(width: AppSpacing.sm),
-            Text(
-              _formatNumber(amount),
-              style: context.textStyles.titleMedium?.bold.copyWith(
-                color: Theme.of(context).colorScheme.onSurface,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth ?? double.infinity),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(icon, style: const TextStyle(fontSize: 18)),
+              const SizedBox(width: AppSpacing.sm),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    _formatNumber(amount),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.textStyles.titleMedium?.bold.copyWith(
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
