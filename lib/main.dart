@@ -21,6 +21,7 @@ import 'package:mergeworks/widgets/captions_overlay.dart';
 import 'package:mergeworks/services/bug_report_service.dart';
 import 'package:mergeworks/services/connectivity_service.dart';
 import 'package:mergeworks/services/popup_manager.dart';
+import 'package:mergeworks/services/notification_settings_service.dart';
 import 'dart:ui';
 
 void main() async {
@@ -104,6 +105,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ShopService()..initialize()),
         ChangeNotifierProvider(create: (_) => AudioService()..initialize()),
         ChangeNotifierProvider(create: (_) => AccessibilityService()..initialize()),
+        ChangeNotifierProvider(create: (_) => NotificationSettingsService()..initialize()),
         Provider(create: (_) => HapticsService()),
         Provider.value(value: AdsService.instance),
         ChangeNotifierProxyProvider<FirebaseService, BugReportService>(

@@ -136,7 +136,10 @@ class ShopScreen extends StatelessWidget {
             final isAdRemoval = item.type == ShopItemType.adRemoval;
             final alreadyOwned = isAdRemoval && gameService.playerStats.adRemovalPurchased;
             final canAffordGems = isSpecial ? ((item.gemCost ?? 0) <= gameService.playerStats.gems) : true;
-            final purchasable = isSpecial || shopService.hasProductDetails(item.id);
+            // For store-backed items we still allow tapping even if ProductDetails
+            // haven't loaded yet, so we can attempt a refresh and surface a
+            // helpful error instead of doing nothing.
+            final purchasable = isSpecial || shopService.isSimulated || shopService.iapAvailable || shopService.hasProductDetails(item.id);
             final bool isAuto = item.id == 'special_auto_select_upgrade';
             final int autoCount = gameService.playerStats.autoSelectCount;
             final bool atCap = isAuto && autoCount >= 10;
@@ -167,6 +170,7 @@ class ShopScreen extends StatelessWidget {
     ShopService shopService,
     GameService gameService,
   ) async {
+    context.read<AudioService>().maybeStartMusicFromUserGesture();
     // Specials are purchased with gems and applied instantly in-game
     if (item.type == ShopItemType.special) {
       final ok = await gameService.purchaseSpecial(item.id, item.gemCost ?? 0);
@@ -176,6 +180,22 @@ class ShopScreen extends StatelessWidget {
         _showMessage(context, 'Not enough gems for ${item.name}');
       }
       return;
+    }
+
+    // If the store is available but this product hasn't resolved yet, try a
+    // refresh and show a clear message if it still isn't found.
+    if (!shopService.isSimulated && !shopService.hasProductDetails(item.id)) {
+      await shopService.refreshProducts();
+      if (!shopService.hasProductDetails(item.id)) {
+        if (context.mounted) {
+          _showMessage(
+            context,
+            'This item isn\'t available in the store yet.\n\nIf you\'re on iOS: use a Sandbox tester + ensure the IAP is Approved/attached to a submitted version (propagation can take up to 24h).',
+            isError: true,
+          );
+        }
+        return;
+      }
     }
 
     context.read<PopupManager>().showDialogNonBlocking(

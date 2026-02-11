@@ -15,6 +15,7 @@ import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'package:mergeworks/services/popup_manager.dart';
 import 'package:mergeworks/widgets/responsive_center.dart';
+import 'package:mergeworks/services/notification_settings_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -30,7 +31,7 @@ class SettingsScreen extends StatelessWidget {
           onPressed: () => context.pop(),
         ),
       ),
-      body: Consumer3<AudioService, GameService, AccessibilityService>(builder: (context, audioService, gameService, a11y, child) {
+      body: Consumer4<AudioService, GameService, AccessibilityService, NotificationSettingsService>(builder: (context, audioService, gameService, a11y, notifications, child) {
         return ResponsiveCenter(
           child: ListView(
             padding: EdgeInsets.zero,
@@ -105,6 +106,20 @@ class SettingsScreen extends StatelessWidget {
                 ),
               );
             }),
+            const SizedBox(height: AppSpacing.lg),
+
+            _buildSection(
+              context,
+              'Notifications 🔔',
+              [
+                _SettingsTile(
+                  icon: Icons.trending_up,
+                  title: 'Level-up popups',
+                  subtitle: notifications.levelUpPopupsEnabled ? 'On' : 'Off',
+                  trailing: Switch(value: notifications.levelUpPopupsEnabled, onChanged: notifications.setLevelUpPopupsEnabled),
+                ),
+              ],
+            ),
             const SizedBox(height: AppSpacing.lg),
 
             // Moved Audio above Accessibility

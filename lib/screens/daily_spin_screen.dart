@@ -27,9 +27,9 @@ class _DailySpinScreenState extends State<DailySpinScreen> with SingleTickerProv
 
   final List<SpinReward> _rewards = [
     SpinReward(id: '1', name: '10 Gems', icon: '💎', type: RewardType.gems, amount: 10, probability: 0.3),
-    SpinReward(id: '2', name: '50 Coins', icon: '🪙', type: RewardType.coins, amount: 50, probability: 0.3),
+    SpinReward(id: '2', name: '25 Coins', icon: '🪙', type: RewardType.coins, amount: 25, probability: 0.3),
     SpinReward(id: '3', name: '20 Energy', icon: '⚡', type: RewardType.energy, amount: 20, probability: 0.2),
-    SpinReward(id: '4', name: '100 Coins', icon: '🪙', type: RewardType.coins, amount: 100, probability: 0.1),
+    SpinReward(id: '4', name: '60 Coins', icon: '🪙', type: RewardType.coins, amount: 60, probability: 0.1),
     SpinReward(id: '5', name: '50 Gems', icon: '💎', type: RewardType.gems, amount: 50, probability: 0.07),
     SpinReward(id: '6', name: '100 Energy', icon: '⚡', type: RewardType.energy, amount: 100, probability: 0.03),
   ];

@@ -1,7 +1,7 @@
 name: mergeworks
 description: "Merge magical items and unravel enchanting progression chains in this captivating puzzle game, blending strategic merges with delightful discoveries in a vibrant fantasy world."
 publish_to: "none"
-version: 1.0.0+22
+version: 1.0.1+1
 
 environment:
   sdk: ^3.8.1
@@ -42,5 +42,5 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/icons/icon.png
+  image_path: assets/icons/MergeWorks.jpg
   remove_alpha_ios: true

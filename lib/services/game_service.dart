@@ -1468,6 +1468,16 @@ class GameService extends ChangeNotifier {
     return 160 + (l - 5) * 35;
   }
 
+  int _coinsForSeasonLevelUp(int newLevel) {
+    // Economy tuning: early levels should not shower coins.
+    // Target: by level ~7, coins from level-ups should feel like a small perk,
+    // not the primary currency source.
+    final lvl = newLevel.clamp(1, 999);
+    if (lvl <= 10) return 20 + lvl * 4; // 24..60
+    if (lvl <= 25) return 60 + (lvl - 10) * 3; // 63..105
+    return 105 + (lvl - 25) * 2; // gentle late growth
+  }
+
   PlayerStats _applySeasonXp(PlayerStats stats, int delta, {required DateTime now}) {
     if (delta <= 0) return stats;
     int level = stats.seasonLevel <= 0 ? 1 : stats.seasonLevel;
@@ -1482,9 +1492,9 @@ class GameService extends ChangeNotifier {
       leveledUp = true;
 
       // Lightweight reward cadence.
-      coins += 60 + level * 10;
+      coins += _coinsForSeasonLevelUp(level);
       if (level % 5 == 0) gems += 10;
-      if (level % 10 == 0) coins += 250;
+      if (level % 10 == 0) coins += 120;
     }
 
     if (!leveledUp && xp == stats.seasonXp) return stats;

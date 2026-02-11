@@ -116,7 +116,6 @@ class PopupManager extends ChangeNotifier {
     return enqueue<void>(() async {
       if (!context.mounted) return null;
       final overlay = Overlay.of(context, rootOverlay: true);
-      if (overlay == null) return null;
 
       // Remove any existing toast so we never stack invisible modal barriers.
       _toastTimer?.cancel();

@@ -25,6 +25,7 @@ import 'package:mergeworks/services/haptics_service.dart';
 import 'package:mergeworks/services/connectivity_service.dart';
 import 'package:mergeworks/services/shop_service.dart';
 import 'package:mergeworks/services/popup_manager.dart';
+import 'package:mergeworks/services/notification_settings_service.dart';
 import 'package:mergeworks/nav.dart';
 
 class GameBoardScreen extends StatefulWidget {
@@ -1305,6 +1306,10 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
       final currLevel = gameService.currentLevel;
       if (currLevel > prevLevel) {
         unawaited(audioService.playLevelUp());
+        final showPopup = context.read<NotificationSettingsService>().levelUpPopupsEnabled;
+        if (showPopup) {
+          _showCenterPopup('Level up! Reached Level $currLevel', icon: Icons.trending_up);
+        }
       }
 
       final completedAchievements = await achievementService.checkProgress(gameService.playerStats);
@@ -1759,7 +1764,7 @@ class _GameBoardScreenState extends State<GameBoardScreen> with TickerProviderSt
                   await popup.showCenterToast(context, message: 'Daily cleared! +25 gems', icon: Icons.celebration);
                 },
                 icon: Icon(Icons.celebration, color: cs.onPrimary),
-                label: Text('Claim 25 gems & return', style: context.textStyles.titleSmall?.semiBold?.withColor(cs.onPrimary)),
+                label: Text('Claim 25 gems & return', style: context.textStyles.titleSmall?.semiBold.withColor(cs.onPrimary)),
                 style: FilledButton.styleFrom(
                   backgroundColor: cs.primary,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),

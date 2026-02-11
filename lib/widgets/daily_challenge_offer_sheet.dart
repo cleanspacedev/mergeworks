@@ -78,7 +78,7 @@ class DailyChallengeOfferSheet extends StatelessWidget {
                       context.push(AppRoutes.dailyChallenge);
                     },
               icon: Icon(Icons.play_arrow, color: cs.onPrimary),
-              label: Text('Start today\'s run', style: context.textStyles.titleSmall?.semiBold?.withColor(cs.onPrimary)),
+              label: Text('Start today\'s run', style: context.textStyles.titleSmall?.semiBold.withColor(cs.onPrimary)),
               style: FilledButton.styleFrom(
                 backgroundColor: cs.primary,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -93,7 +93,7 @@ class DailyChallengeOfferSheet extends StatelessWidget {
                 side: BorderSide(color: cs.outline.withValues(alpha: 0.35)),
                 padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
               ),
-              child: Text('Not now', style: context.textStyles.titleSmall?.semiBold?.withColor(cs.onSurface)),
+              child: Text('Not now', style: context.textStyles.titleSmall?.semiBold.withColor(cs.onSurface)),
             ),
             const SizedBox(height: AppSpacing.sm),
           ],

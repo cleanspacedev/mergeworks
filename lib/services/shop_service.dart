@@ -79,6 +79,23 @@ class ShopService extends ChangeNotifier {
     }
   }
 
+  /// Re-queries the store for product metadata.
+  ///
+  /// Useful if the store catalog wasn't ready at app startup or the user just
+  /// signed into the App Store / Play Store.
+  Future<void> refreshProducts() async {
+    if (kIsWeb) return;
+    if (!_iapAvailable) {
+      try {
+        _iapAvailable = await _iap.isAvailable();
+      } catch (e) {
+        debugPrint('IAP refresh isAvailable failed: $e');
+        _iapAvailable = false;
+      }
+    }
+    if (_iapAvailable) await _loadProducts();
+  }
+
   String? priceLabelFor(String itemId) {
     final pd = _productDetailsByItemId[itemId];
     return pd?.price; // Localized price string like "\$0.99" or "€0,99"
